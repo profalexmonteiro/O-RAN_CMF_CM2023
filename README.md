@@ -148,3 +148,16 @@ MLB - BS load to CIO value mapping
         - number of handovers ("ho" files)
         - number of ping-pong handovers ("pp" files)
     - chosen parameters of base stations were polled every second ("bs" files)
+  
+
+Salve como:
+
+ran_oran_sim.py
+
+Instale dependências:
+
+pip install numpy matplotlib
+
+Execute:
+
+python ran_oran_sim.py
