@@ -14,6 +14,9 @@
 # - Lógica de handover A3 (Event A3 do 3GPP)
 # - xApps RIC para MRO (Mobility Robustness Optimization) e MLB (Load Balancing)
 
+import os
+import argparse
+import concurrent.futures
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
@@ -1349,9 +1352,12 @@ def ric_update(bs_list, current_time):
 # - poly: polígono da área
 # - results: dicionário com métricas
 
-def run_simulation():
+def run_simulation(show_progress=False):
     """Executa a simulação completa da rede celular.
     
+    Args:
+        show_progress: Se True, imprime o progresso da simulação.
+
     Returns:
         Tupla (bs_list, users, poly, results)
     """
@@ -1446,6 +1452,13 @@ def run_simulation():
         last_total_pp = total_pp
         last_total_rlf = total_rlf
 
+        if show_progress and (step % max(1, STEPS // 40) == 0 or step == STEPS - 1):
+            percent = (step + 1) * 100.0 / STEPS
+            print(f"\rSimulação: passo {step + 1}/{STEPS} ({percent:.1f}%)", end="", flush=True)
+
+    if show_progress:
+        print()
+
     # Compila resultados
     results = {
         "time": np.array(time_history),
@@ -1460,6 +1473,43 @@ def run_simulation():
     }
 
     return bs_list, users, poly, results
+
+
+def run_simulation_worker(seed):
+    """Executa uma simulação independente em processo separado."""
+    np.random.seed(seed)
+    bs_list, users, poly, results = run_simulation(show_progress=False)
+    return {
+        "seed": seed,
+        "total_handovers": int(np.sum(results["handovers"])),
+        "total_pingpongs": int(np.sum(results["pingpongs"])),
+        "total_rlfs": int(np.sum(results["rlfs"])),
+        "total_blocked_attempts": int(results["total_blocked_attempts"]),
+        "connected_final": int(results["connected_users"][-1]),
+    }
+
+
+def run_simulation_parallel(repetitions=2, workers=None):
+    workers = workers or os.cpu_count() or 1
+    print(f"Executando {repetitions} simulações em paralelo usando {workers} workers...")
+    seeds = [42 + i for i in range(repetitions)]
+    metrics = []
+
+    def format_progress(completed, total, width=30):
+        pct = completed / total
+        filled = int(pct * width)
+        bar = "#" * filled + "-" * (width - filled)
+        return f"[{bar}] {completed}/{total} ({pct * 100:.1f}%)"
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(run_simulation_worker, seed) for seed in seeds]
+
+        for completed, future in enumerate(concurrent.futures.as_completed(futures), start=1):
+            metrics.append(future.result())
+            print(f"\r{format_progress(completed, repetitions)}", end="", flush=True)
+
+    print()
+    return metrics
 
 
 # ============================================================
@@ -1637,13 +1687,43 @@ def print_summary(bs_list, users, results):
 # O código pode ser executado diretamente com:
 # python simulation.py
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Simulação O-RAN com progresso e execução paralela.")
+    parser.add_argument("--runs", "-r", type=int, default=1, help="Número de simulações independentes a executar em paralelo")
+    parser.add_argument("--workers", "-w", type=int, default=os.cpu_count() or 1, help="Número de workers a usar em ProcessPoolExecutor")
+    parser.add_argument("--no-plots", action="store_true", help="Não exibir os gráficos ao final")
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    if args.runs <= 1:
+        # Executa a simulação única com progresso
+        bs_list, users, poly, results = run_simulation(show_progress=True)
+        print_summary(bs_list, users, results)
+
+        if not args.no_plots:
+            plot_topology(bs_list, users, poly)
+            plot_results(results)
+        return
+
+    # Executa simulações paralelas usando todos os núcleos disponíveis
+    metrics = run_simulation_parallel(repetitions=args.runs, workers=args.workers)
+
+    total_handovers = np.array([m["total_handovers"] for m in metrics])
+    total_pingpongs = np.array([m["total_pingpongs"] for m in metrics])
+    total_rlfs = np.array([m["total_rlfs"] for m in metrics])
+    total_blocked = np.array([m["total_blocked_attempts"] for m in metrics])
+    connected_final = np.array([m["connected_final"] for m in metrics])
+
+    print("\nResumo agregado das simulações paralelas:")
+    print(f"Handovers médios: {total_handovers.mean():.1f} ± {total_handovers.std():.1f}")
+    print(f"Ping-pongs médios: {total_pingpongs.mean():.1f} ± {total_pingpongs.std():.1f}")
+    print(f"RLFs médios: {total_rlfs.mean():.1f} ± {total_rlfs.std():.1f}")
+    print(f"Tentativas bloqueadas médias: {total_blocked.mean():.1f} ± {total_blocked.std():.1f}")
+    print(f"Usuários conectados finais médios: {connected_final.mean():.1f} ± {connected_final.std():.1f}")
+
+
 if __name__ == "__main__":
-    # Executa a simulação
-    bs_list, users, poly, results = run_simulation()
-
-    # Imprime resumo dos resultados
-    print_summary(bs_list, users, results)
-
-    # Gera visualizações
-    plot_topology(bs_list, users, poly)
-    plot_results(results)
+    main()
