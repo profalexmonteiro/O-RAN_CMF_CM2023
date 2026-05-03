@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Simulação O-RAN - Interface Web</title>
+    <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+    <header>
+        <div>
+            <h1>Simulação O-RAN</h1>
+            <p>Interface web com aba de setup e visualização em tempo real.</p>
+        </div>
+        <button type="button" id="language-toggle" class="language-toggle">English</button>
+    </header>
+
+    <nav class="tabs">
+        <button id="tab-setup" class="tab-button active">Setup</button>
+        <button id="tab-visual" class="tab-button">Visualização</button>
+    </nav>
+
+    <main>
+        <section id="setup-panel" class="tab-panel active">
+            <h2>Configuração da Simulação</h2>
+            <form id="setup-form">
+                <div class="setup-form-header">
+                    <h3>Cenário Essencial</h3>
+                    <p>Ajuste apenas estes campos para rodar um cenário básico. Os demais cartões refinam radio, mobilidade e controle.</p>
+                </div>
+                <label>
+                    Tempo de simulação (s)
+                    <input type="number" name="sim_time" id="sim_time" min="10" step="10" value="1000" />
+                </label>
+                <label>
+                    Distância entre antenas (m)
+                    <input type="number" name="inter_site_distance" id="inter_site_distance" min="50" step="50" value="600" />
+                </label>
+                <label>
+                    Tipo de simulação
+                    <select name="cmf_mode" id="cmf_mode">
+                        <option value="no_CM">Sem CMF</option>
+                        <option value="prio_MRO">Prioridade MRO</option>
+                        <option value="prio_MLB">Prioridade MLB</option>
+                    </select>
+                </label>
+                <label class="checkbox-label" title="Quando habilitado, a simulação gera um arquivo CSV por estação base em simulation_results/<tipo_de_simulacao>.">
+                    <input type="checkbox" id="export_bs_results" name="export_bs_results" checked />
+                    <span>Gerar CSVs por estação base</span>
+                </label>
+                <button type="button" id="setup-visual-shortcut" class="secondary-button">Ir para Visualização</button>
+            </form>
+            <div class="parameter-card">
+                <h3>Parâmetros das Estações Base</h3>
+                <div class="parameter-list">
+                    <label title="Ganho aplicado pela antena da estação base ao sinal transmitido. Valores maiores aumentam a potência efetiva irradiada e podem melhorar o RSRP recebido pelos UEs.">
+                        Ganho da antena (dB)
+                        <input type="number" id="bs_antenna_gain_db" step="0.1" value="2" />
+                    </label>
+                    <label title="Altura física da antena da estação base em relação ao solo. Afeta o modelo de propagação e a distância de cobertura, especialmente em cenários macro urbanos.">
+                        Altura da antena (m)
+                        <input type="number" id="bs_height_m" step="0.1" value="10" />
+                    </label>
+                    <label title="Perda de potência causada por cabos, conectores e elementos RF entre o transmissor e a antena. Esse valor reduz a potência efetiva transmitida.">
+                        Perda no cabo (dB)
+                        <input type="number" id="bs_cable_loss_db" step="0.1" value="2" />
+                    </label>
+                    <label title="Potência de transmissão da estação base em dBm. É a potência inicial usada no cálculo de enlace antes dos ganhos e perdas de antena/cabo/propagação.">
+                        Potência TX (dBm)
+                        <input type="number" id="bs_tx_power_dbm" step="0.1" value="28" />
+                    </label>
+                    <label title="Frequência central da portadora usada pela rede. Frequências maiores geralmente sofrem maior perda de percurso no modelo de propagação.">
+                        Frequência central (MHz)
+                        <input type="number" id="center_freq_mhz" step="1" value="2100" />
+                    </label>
+                    <label title="Largura total de banda disponível para transmissão. Afeta o ruído térmico calculado e a quantidade de recursos de rádio disponíveis.">
+                        Bandwidth (MHz)
+                        <input type="number" id="bandwidth_mhz" step="1" value="20" />
+                    </label>
+                    <label title="Número de subportadoras considerado como referência na configuração de rádio. No modelo atual, é mantido como parâmetro de configuração da simulação.">
+                        Subcarrier count
+                        <input type="number" id="subcarrier_count" step="1" value="12" />
+                    </label>
+                    <label title="Espaçamento entre subportadoras OFDM. O valor padrão de 15 kHz é típico em configurações LTE/5G numerology 0.">
+                        Subcarrier spacing (kHz)
+                        <input type="number" id="subcarrier_spacing_khz" step="1" value="15" />
+                    </label>
+                    <label title="Offset individual da célula usado nas decisões de handover e balanceamento de carga. Valores positivos tornam a célula mais atrativa; valores negativos a tornam menos atrativa.">
+                        Cell Individual Offset padrão (dB)
+                        <input type="number" id="default_cio_db" step="0.1" value="0" />
+                    </label>
+                    <label title="Tempo mínimo pelo qual a condição de handover precisa permanecer válida antes da troca de célula ser executada. Valores maiores reduzem handovers rápidos, mas podem atrasar a reação.">
+                        Handover Time-To-Trigger padrão (s)
+                        <input type="number" id="default_ttt_s" step="0.001" value="0.064" />
+                    </label>
+                    <label title="Margem adicional exigida para confirmar que uma célula vizinha está melhor que a célula atual. Ajuda a evitar handovers instáveis e eventos de ping-pong.">
+                        Histerese de handover padrão (dB)
+                        <input type="number" id="default_hysteresis_db" step="0.1" value="0" />
+                    </label>
+                </div>
+            </div>
+            <div class="parameter-card">
+                <h3>Usuários</h3>
+                <div class="parameter-list">
+                    <label title="Quantidade total de equipamentos de usuário distribuídos aleatoriamente dentro da área de simulação. O valor padrão é 380.">
+                        Número de UEs
+                        <input type="number" name="n_users" id="n_users" min="10" step="10" value="380" />
+                    </label>
+                    <label title="Quantidade nominal de usuários por estação base. Com 19 estações e 20 usuários por BS, o cenário padrão totaliza 380 usuários.">
+                        Usuários por estação base
+                        <input type="number" id="users_per_bs" min="1" step="1" value="20" />
+                    </label>
+                    <label title="Passo de atualização da simulação. A cada 0.05 s, posições, conexões e eventos de mobilidade são reavaliados.">
+                        Atualização de posição (s)
+                        <input type="number" name="dt" id="dt" min="0.01" step="0.01" value="0.05" />
+                    </label>
+                    <label title="Probabilidade de um usuário ser pedestre. O restante dos usuários é tratado como veículo. Valor padrão: 80%.">
+                        Pedestres (%)
+                        <input type="number" id="pedestrian_prob_pct" min="0" max="100" step="1" value="80" />
+                    </label>
+                    <label title="Velocidade constante dos usuários pedestres durante o movimento aleatório dentro da área.">
+                        Velocidade pedestre (m/s)
+                        <input type="number" id="pedestrian_speed" min="0" step="0.1" value="5" />
+                    </label>
+                    <label title="Velocidade constante dos usuários em veículos durante o movimento aleatório dentro da área.">
+                        Velocidade veículo (m/s)
+                        <input type="number" id="vehicle_speed" min="0" step="0.1" value="25" />
+                    </label>
+                    <label title="Probabilidade de mudar a direção a cada atualização de posição. Se o usuário alcançar a fronteira da área, a direção é alterada com probabilidade de 100%.">
+                        Mudança de direção (%)
+                        <input type="number" id="direction_change_prob_pct" min="0" max="100" step="0.001" value="0.06" />
+                    </label>
+                    <label title="Ganho da antena do equipamento de usuário. Afeta a potência recebida no cálculo do enlace.">
+                        Ganho da antena UE (dB)
+                        <input type="number" id="ue_antenna_gain_db" step="0.1" value="0" />
+                    </label>
+                    <label title="Altura média do equipamento de usuário em relação ao solo, usada no modelo de propagação.">
+                        Altura da antena UE (m)
+                        <input type="number" id="ue_height_m" step="0.1" value="1.6" />
+                    </label>
+                    <label title="Perda de cabo do equipamento de usuário. Em dispositivos móveis, normalmente é considerada desprezível.">
+                        Perda no cabo UE (dB)
+                        <input type="number" id="ue_cable_loss_db" step="0.1" value="0" />
+                    </label>
+                    <label title="Número de camadas MIMO representando a configuração 2x2. No modelo atual, esse valor é armazenado como parâmetro do cenário.">
+                        MIMO layers
+                        <input type="number" id="ue_mimo_layers" min="1" step="1" value="2" />
+                    </label>
+                    <label title="Sensibilidade mínima de recepção do UE. Sinais abaixo desse limite não são aceitos para conexão ou handover.">
+                        Sensibilidade RX (dBm)
+                        <input type="number" id="ue_rx_sensitivity_dbm" step="1" value="-80" />
+                    </label>
+                </div>
+            </div>
+            <div class="parameter-card">
+                <h3>User Profiles</h3>
+                <p class="card-description">
+                    Cada perfil define o bitrate exigido pelo usuário e a probabilidade de atribuição aleatória desse perfil.
+                </p>
+                <div class="parameter-list">
+                    <label title="Taxa de dados exigida pelos usuários do perfil low bitrate. Esse valor representa o throughput mínimo necessário para satisfazer o serviço do usuário. Cor no gráfico: verde.">
+                        Low bitrate (kbps)
+                        <input type="number" id="low_bitrate_kbps" min="1" step="1" value="96" />
+                    </label>
+                    <label title="Probabilidade de um UE receber aleatoriamente o perfil low bitrate ao ser criado. Valor padrão: 60%.">
+                        Low profile (%)
+                        <input type="number" id="low_profile_prob_pct" min="0" max="100" step="1" value="60" />
+                    </label>
+                    <label title="Taxa de dados exigida pelos usuários do perfil medium bitrate. Esse valor representa o throughput mínimo necessário para satisfazer o serviço do usuário. Cor no gráfico: amarelo.">
+                        Medium bitrate (kbps)
+                        <input type="number" id="medium_bitrate_kbps" min="1" step="1" value="5000" />
+                    </label>
+                    <label title="Probabilidade de um UE receber aleatoriamente o perfil medium bitrate ao ser criado. Valor padrão: 30%.">
+                        Medium profile (%)
+                        <input type="number" id="medium_profile_prob_pct" min="0" max="100" step="1" value="30" />
+                    </label>
+                    <label title="Taxa de dados exigida pelos usuários do perfil high bitrate. Esse valor representa o throughput mínimo necessário para satisfazer o serviço do usuário. Cor no gráfico: vermelho.">
+                        High bitrate (kbps)
+                        <input type="number" id="high_bitrate_kbps" min="1" step="1" value="24000" />
+                    </label>
+                    <label title="Probabilidade de um UE receber aleatoriamente o perfil high bitrate ao ser criado. Valor padrão: 10%.">
+                        High profile (%)
+                        <input type="number" id="high_profile_prob_pct" min="0" max="100" step="1" value="10" />
+                    </label>
+                </div>
+            </div>
+            <div class="parameter-card">
+                <h3>Traffic Generation</h3>
+                <p class="card-description">
+                    Cada usuário gera tráfego por tentativas de conexão. A conexão só é estabelecida quando alguma estação base possui PRBs livres suficientes, e pode sofrer handover após evento A3.
+                </p>
+                <div class="parameter-list">
+                    <label title="Tempo médio entre tentativas de conexão geradas por cada usuário. O processo representa chegadas aleatórias de tráfego na rede.">
+                        Média entre tentativas (s)
+                        <input type="number" id="connection_attempt_mean" min="0.1" step="0.1" value="20" />
+                    </label>
+                    <label title="Desvio padrão do tempo entre tentativas de conexão. Valores maiores tornam as chegadas de tráfego mais dispersas.">
+                        Desvio entre tentativas (s)
+                        <input type="number" id="connection_attempt_std" min="0" step="0.1" value="3" />
+                    </label>
+                    <label title="Duração média de uma conexão estabelecida. Durante esse período, o usuário mantém PRBs alocados na estação base servidora.">
+                        Duração média da conexão (s)
+                        <input type="number" id="connection_duration_mean" min="0.1" step="0.1" value="60" />
+                    </label>
+                    <label title="Desvio padrão da duração da conexão. Valores maiores aumentam a variação do tempo em que conexões permanecem ativas.">
+                        Desvio da duração (s)
+                        <input type="number" id="connection_duration_std" min="0" step="0.1" value="15" />
+                    </label>
+                </div>
+            </div>
+            <div class="parameter-card">
+                <h3>Propagation Model</h3>
+                <p class="card-description">
+                    O modelo UMa (Urban Macro) do 3GPP TR 38.901 é utilizado para calcular pathloss e margens adicionais de propagação.
+                </p>
+                <div class="parameter-list">
+                    <label title="Perda adicional causada pela absorção do corpo do usuário ou obstrução próxima ao terminal.">
+                        Body loss (dB)
+                        <input type="number" id="body_loss_db" step="0.1" value="1" />
+                    </label>
+                    <label title="Margem usada para representar variações lentas do canal, como sombreamento por prédios e obstáculos.">
+                        Slow-fading margin (dB)
+                        <input type="number" id="slow_fading_margin_db" step="0.1" value="4" />
+                    </label>
+                    <label title="Perda adicional associada à vegetação entre transmissor e receptor.">
+                        Foliage loss (dB)
+                        <input type="number" id="foliage_loss_db" step="0.1" value="4" />
+                    </label>
+                    <label title="Margem adicionada para representar interferência de outras células ou transmissões concorrentes.">
+                        Interference margin (dB)
+                        <input type="number" id="interference_margin_db" step="0.1" value="2" />
+                    </label>
+                    <label title="Margem de atenuação por chuva. No cenário padrão, a chuva não é considerada e o valor é 0 dB.">
+                        Rain margin (dB)
+                        <input type="number" id="rain_margin_db" step="0.1" value="0" />
+                    </label>
+                </div>
+            </div>
+            <div class="parameter-card">
+                <h3>RIC Configuration</h3>
+                <p class="card-description">
+                    Todas as estações base são gerenciadas por um único near-RT RIC. Os xApps MRO e MLB são executados simultaneamente para ajustar handover e balanceamento de carga.
+                </p>
+                <div class="parameter-list">
+                    <label title="Período entre execuções do controle RIC. A cada ciclo, os xApps MRO e MLB reavaliam estatísticas, carga e parâmetros das estações base.">
+                        Período de controle RIC (s)
+                        <input type="number" id="ric_control_period" min="0.1" step="0.1" value="10" />
+                    </label>
+                    <label title="Janela histórica usada pelo MRO para calcular a razão de ping-pongs e RLFs em relação ao total de handovers recentes.">
+                        Janela MRO (s)
+                        <input type="number" id="mro_window" min="1" step="1" value="240" />
+                    </label>
+                    <label title="Intervalo máximo para classificar um handover BS #1 -> BS #2 -> BS #1 como ping-pong. Valor padrão: 10 segundos.">
+                        Período ping-pong (s)
+                        <input type="number" id="pingpong_period" min="0.1" step="0.1" value="10" />
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <section id="visual-panel" class="tab-panel">
+            <div class="visual-header">
+                <div>
+                    <h2>Visualização em Tempo Real</h2>
+                    <p>Monitore os movimentos das antenas e dos UEs.</p>
+                </div>
+                <div class="button-row visual-actions">
+                    <button type="button" id="start-button">Iniciar Simulação</button>
+                </div>
+                <div class="metrics">
+                    <p><strong>Conectados:</strong> <span id="connected-count">0</span></p>
+                    <p><strong>Load médio:</strong> <span id="avg-load">0.0</span></p>
+                    <p><strong>Load máximo:</strong> <span id="max-load">0.0</span></p>
+                    <p><strong>Handovers:</strong> <span id="handovers">0</span></p>
+                </div>
+            </div>
+            <div class="status-card visual-status">
+                <h3>Status</h3>
+                <p id="status-message">Aguardando início.</p>
+                <p><strong>Última atualização:</strong> <span id="last-update">-</span></p>
+                <p><strong>Progresso:</strong> <span id="progress">0%</span></p>
+            </div>
+            <div class="canvas-container">
+                <canvas id="simulation-canvas" width="900" height="620"></canvas>
+            </div>
+            <div class="legend">
+                <span><span class="legend-dot low"></span> Low bitrate: 96 kbps (60%)</span>
+                <span><span class="legend-dot medium"></span> Medium bitrate: 5000 kbps (30%)</span>
+                <span><span class="legend-dot high"></span> High bitrate: 24000 kbps (10%)</span>
+                <span><span class="legend-dot bs"></span> Antena (BS)</span>
+            </div>
+        </section>
+    </main>
+
+    <script src="app.js"></script>
+</body>
+</html>

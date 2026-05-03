@@ -17,6 +17,8 @@
 import os
 import argparse
 import concurrent.futures
+import csv
+from datetime import datetime
 import numpy as np
 import matplotlib.pyplot as plt
 from dataclasses import dataclass, field
@@ -84,13 +86,15 @@ UE_ANTENNA_GAIN_DB = 0.0  # Ganho da antena do UE em dB
 UE_HEIGHT_M = 1.6  # Altura típica do usuário em metros
 UE_CABLE_LOSS_DB = 0.0  # Perda no cabo do UE (desprezível)
 UE_RX_SENSITIVITY_DBM = -80.0  # Sensibilidade mínima de recepção em dBm
+UE_MIMO_LAYERS = 2  # Configuração MIMO 2x2
 
 # Velocidades de movimento:
-# - Pedestre: 5 km/h (1.4 m/s)
-# - Veículo: 25 km/h (6.9 m/s)
+# - Pedestre: 5 m/s
+# - Veículo: 25 m/s
 # - Probabilidade de mudança de direção: 0.06% por passo
-PEDESTRIAN_SPEED = 5.0  # Velocidade de pedestres em km/h
-VEHICLE_SPEED = 25.0  # Velocidade de veículos em km/h
+PEDESTRIAN_PROB = 0.80  # 80% dos usuários são pedestres
+PEDESTRIAN_SPEED = 5.0  # Velocidade de pedestres em m/s
+VEHICLE_SPEED = 25.0  # Velocidade de veículos em m/s
 DIRECTION_CHANGE_PROB = 0.0006  # Probabilidade de mudar direção por step
 
 # ============================================================
@@ -111,12 +115,12 @@ USER_PROFILES = {
     "medium": {
         "bitrate_bps": 5e6,  # 5 Mbps - video streaming
         "prob": 0.30,  # 30% dos usuários
-        "color": "olive"  # Cor para visualização
+        "color": "yellow"  # Cor para visualização
     },
     "high": {
         "bitrate_bps": 24e6,  # 24 Mbps - 4K/gaming
         "prob": 0.10,  # 10% dos usuários
-        "color": "darkred"  # Cor para visualização
+        "color": "red"  # Cor para visualização
     }
 }
 
@@ -183,6 +187,8 @@ TOTAL_PRBS_PER_BS = int(BANDWIDTH_HZ / PRB_BANDWIDTH_HZ)  # PRBs por BS
 RIC_CONTROL_PERIOD = 10.0  # Período de atualização do RIC (s)
 MRO_WINDOW = 240.0  # Janela para cálculo de métricas MRO (s)
 PINGPONG_PERIOD = 10.0  # Período para detectar ping-pong (s)
+CMF_MODE = "no_CM"
+CMF_MODES = ("no_CM", "prio_MRO", "prio_MLB")
 
 # Thresholds para detecção de RLF (Radio Link Failure)
 RLF_SINR_THRESHOLD_DB = -6.0  # SINR mínimo: -6 dB
@@ -209,41 +215,101 @@ RLF_RSRP_THRESHOLD_DBM = -110.0  # RSRP mínimo: -110 dBm
 # - CIO negativo: repele usuários (célula mais "fraca")
 
 def choose_ttt_from_pingpong_ratio(ratio):
-    """Seleciona TTT (Time To Trigger) baseado na razão de ping-pong."""
-    if ratio < 0.05:
-        return 0.064  # TTT muito curto para ping-pong muito baixo
-    elif ratio < 0.15:
-        return 0.128  # TTT curto
-    elif ratio < 0.30:
-        return 0.256  # TTT médio
-    else:
-        return 0.512  # TTT longo para reduzir ping-pongs
+    """Seleciona TTT (Time To Trigger) baseado na razão de ping-pong conforme o artigo."""
+    if ratio <= 0.2667:
+        return 0.08
+    if ratio <= 0.3333:
+        return 0.10
+    if ratio <= 0.4000:
+        return 0.128
+    if ratio <= 0.4667:
+        return 0.16
+    if ratio <= 0.5333:
+        return 0.256
+    if ratio <= 0.6000:
+        return 0.32
+    if ratio <= 0.6667:
+        return 0.48
+    if ratio <= 0.7333:
+        return 0.512
+    if ratio <= 0.8000:
+        return 0.64
+    if ratio <= 0.8667:
+        return 1.024
+    if ratio <= 0.9333:
+        return 1.28
+    return 2.56
 
 
 def choose_hysteresis_from_rlf_ratio(ratio):
-    """Seleciona hysteresis baseado na razão de RLF."""
-    if ratio < 0.03:
-        return 0.0  # Sem hysteresis
-    elif ratio < 0.08:
-        return 1.0  # 1 dB de hysteresis
-    elif ratio < 0.15:
-        return 2.0  # 2 dB de hysteresis
-    else:
-        return 3.0  # 3 dB de hysteresis (mais conservador)
+    """Seleciona hysteresis baseado na razão de RLF conforme o artigo."""
+    if ratio <= 0.15:
+        return 1.0
+    if ratio <= 0.20:
+        return 1.5
+    if ratio <= 0.25:
+        return 2.0
+    if ratio <= 0.30:
+        return 2.5
+    if ratio <= 0.35:
+        return 3.0
+    if ratio <= 0.40:
+        return 3.5
+    if ratio <= 0.45:
+        return 4.0
+    if ratio <= 0.50:
+        return 4.5
+    if ratio <= 0.55:
+        return 5.0
+    if ratio <= 0.60:
+        return 5.5
+    if ratio <= 0.65:
+        return 6.0
+    if ratio <= 0.70:
+        return 6.5
+    if ratio <= 0.75:
+        return 7.0
+    if ratio <= 0.80:
+        return 7.5
+    if ratio <= 0.85:
+        return 8.0
+    if ratio <= 0.90:
+        return 8.5
+    if ratio <= 0.95:
+        return 9.0
+    return 9.5
 
 
 def choose_cio_from_load(load):
-    """Seleciona CIO (Cell Individual Offset) baseado na carga da célula."""
-    if load < 0.35:
-        return 3.0  # Baixa carga: attracts users
-    elif load < 0.60:
-        return 1.0  # Carga média-baixa
-    elif load < 0.80:
-        return 0.0  # Carga média
-    elif load < 0.95:
-        return -2.0  # Carga alta: repels users
-    else:
-        return -4.0  # Carga muito alta: repels strongly
+    """Seleciona CIO (Cell Individual Offset) baseado na carga da célula conforme o artigo."""
+    if load <= 0.4545:
+        return 0.0
+    if load <= 0.5455:
+        return 0.5
+    if load <= 0.6364:
+        return 1.0
+    if load <= 0.7273:
+        return 1.5
+    if load <= 0.8182:
+        return 2.0
+    if load <= 0.9091:
+        return 2.5
+    return 3.0
+
+
+def _mro_conflict_priority(bs):
+    """Retorna True se a BS estiver em condição que prioriza MRO sobre MLB."""
+    total_ho = len(bs.ho_events)
+    if total_ho == 0:
+        return False
+    pp_ratio = len(bs.pingpong_events) / total_ho
+    rlf_ratio = len(bs.rlf_events) / total_ho
+    return pp_ratio > 0.2667 or rlf_ratio > 0.15
+
+
+def _mlb_priority(bs):
+    """Retorna True se a carga da BS indica que MLB deve ter prioridade."""
+    return bs.load() > 0.8182
 
 
 # ============================================================
@@ -354,7 +420,7 @@ class User:
 # - Gera ponto aleatório dentro do polígono
 # - Utilizado para posicionar usuários iniciais
 
-def generate_19_bs_hex_grid(isd=600, center_x=1000, center_y=1000):
+def generate_19_bs_hex_grid(isd=None, center_x=1000, center_y=1000):
     """Gera 19 estações base em layout hexagonal (grid de anéis).
     
     Args:
@@ -365,6 +431,9 @@ def generate_19_bs_hex_grid(isd=600, center_x=1000, center_y=1000):
     Returns:
         Lista de objetos BaseStation em posições hexagonais
     """
+    if isd is None:
+        isd = INTER_SITE_DISTANCE
+
     coords = []
 
     rings = 2  # 2 anéis ao redor do centro = 19 células
@@ -815,8 +884,8 @@ def create_users(poly):
         # Gera posição aleatória dentro do polígono
         x, y = random_point_inside(poly)
 
-        # 80% pedestres, 20% veículos
-        is_pedestrian = np.random.rand() < 0.80
+        # Divide usuários entre pedestres e veículos conforme a configuração.
+        is_pedestrian = np.random.rand() < PEDESTRIAN_PROB
         speed = PEDESTRIAN_SPEED if is_pedestrian else VEHICLE_SPEED
         direction = np.random.uniform(0, 2 * np.pi)
 
@@ -998,7 +1067,7 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
         current_time: Tempo atual
     
     Returns:
-        True se handover bem-sucedido, False caso contrário
+        Dicionário com dados do handover se bem-sucedido, None caso contrário
     """
     source_bs_idx = ue.serving_bs
 
@@ -1039,6 +1108,17 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
     # Registra evento de handover
     source_bs.ho_events.append(current_time)
 
+    handover_event = {
+        "time": float(current_time),
+        "previous bs": int(source_bs.bs_id),
+        "current bs": int(target_bs.bs_id),
+        "user": int(ue.ue_id),
+        "conn_sinr": float(sinr_db),
+        "x pos": float(ue.x),
+        "y pos": float(ue.y),
+        "pingpong": None,
+    }
+
     # Detecta ping-pong: retorno à BS anterior em < 10s
     if (
         old_last_ho_time > 0
@@ -1047,8 +1127,17 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
     ):
         ue.total_pingpongs += 1
         source_bs.pingpong_events.append(current_time)
+        handover_event["pingpong"] = {
+            "time": float(current_time),
+            "current bs": int(target_bs.bs_id),
+            "user": int(ue.ue_id),
+            "conn_sinr": float(sinr_db),
+            "x pos": float(ue.x),
+            "y pos": float(ue.y),
+            "ho pp time": float(current_time - old_last_ho_time),
+        }
 
-    return True
+    return handover_event
 
 
 def a3_handover_logic(ue, bs_list, current_time, dt):
@@ -1066,9 +1155,12 @@ def a3_handover_logic(ue, bs_list, current_time, dt):
         bs_list: Lista de BSs
         current_time: Tempo atual
         dt: Passo de tempo
+
+    Returns:
+        Dicionário com dados do handover se ocorrer, None caso contrário
     """
     if not ue.connected:
-        return
+        return None
 
     current_idx = ue.serving_bs
     current_bs = bs_list[current_idx]
@@ -1080,7 +1172,7 @@ def a3_handover_logic(ue, bs_list, current_time, dt):
     if best_idx == current_idx:
         ue.candidate_bs = None
         ue.ttt_timer = 0.0
-        return
+        return None
 
     current_rsrp = rsrp[current_idx]
     target_rsrp = rsrp[best_idx]
@@ -1099,13 +1191,16 @@ def a3_handover_logic(ue, bs_list, current_time, dt):
 
         # Verifica se TTT foi atingido
         if ue.ttt_timer >= current_bs.ttt_s:
-            perform_handover(ue, bs_list, best_idx, current_time)
+            handover_event = perform_handover(ue, bs_list, best_idx, current_time)
             ue.candidate_bs = None
             ue.ttt_timer = 0.0
+            return handover_event
     else:
         # Condição não satisfeita, reseta
         ue.candidate_bs = None
         ue.ttt_timer = 0.0
+
+    return None
 
 
 # ============================================================
@@ -1118,8 +1213,8 @@ def a3_handover_logic(ue, bs_list, current_time, dt):
 # - Reflexão nas bordas da área de simulação
 #
 # O modelo considera:
-# - Usuários pedestres: 5 km/h
-# - Usuários veículos: 25 km/h
+# - Usuários pedestres: 5 m/s
+# - Usuários veículos: 25 m/s
 # - Mudança de direção: 0.06% de probabilidade por passo
 
 def update_user_position(ue, poly):
@@ -1181,10 +1276,10 @@ def check_rlf(ue, bs_list, current_time):
         current_time: Tempo atual
     
     Returns:
-        True se RLF detectado, False caso contrário
+        Dicionário com dados do RLF se detectado, None caso contrário
     """
     if not ue.connected:
-        return False
+        return None
 
     # Calcula SINR e potências
     sinr_db, rx_powers = calculate_sinr_db(ue, bs_list, ue.serving_bs)
@@ -1192,8 +1287,18 @@ def check_rlf(ue, bs_list, current_time):
 
     # Verifica thresholds de RLF
     if sinr_db < RLF_SINR_THRESHOLD_DB or rsrp < RLF_RSRP_THRESHOLD_DBM:
+        serving_bs = bs_list[ue.serving_bs]
+        rlf_event = {
+            "time": float(current_time),
+            "current bs": int(serving_bs.bs_id),
+            "user": int(ue.ue_id),
+            "conn_sinr": float(sinr_db),
+            "x pos": float(ue.x),
+            "y pos": float(ue.y),
+        }
+
         # Registra evento de RLF na BS
-        bs_list[ue.serving_bs].rlf_events.append(current_time)
+        serving_bs.rlf_events.append(current_time)
         
         # Incrementa contador do UE
         ue.total_rlfs += 1
@@ -1204,9 +1309,9 @@ def check_rlf(ue, bs_list, current_time):
         # Agenda nova tentativa
         ue.next_attempt_time = generate_next_attempt_time(current_time)
 
-        return True
+        return rlf_event
 
-    return False
+    return None
 
 
 # ============================================================
@@ -1297,9 +1402,7 @@ def ric_mro_update(bs_list, current_time):
 def ric_mlb_update(bs_list):
     """Atualiza parâmetros de Load Balancing (CIO).
     
-    Ajusta Cell Individual Offset baseado na carga:
-    - Carga baixa (< 35%): CIO +3 dB (atrai usuários)
-    - Carga alta (> 95%): CIO -4 dB (repele usuários)
+    Ajusta Cell Individual Offset baseado na carga em faixas definidas pelo artigo.
     
     Args:
         bs_list: Lista de BSs
@@ -1308,55 +1411,330 @@ def ric_mlb_update(bs_list):
         bs.cio_db = choose_cio_from_load(bs.load())
 
 
-def ric_update(bs_list, current_time):
+def ric_update(bs_list, current_time, mode=CMF_MODE):
     """Coordena atualização de todos os xApps do RIC.
     
-    Executa em período definido (RIC_CONTROL_PERIOD = 10s):
-    1. MRO: otimiza mobilidade
-    2. MLB: balanceia carga
-    
+    Executa em período definido (RIC_CONTROL_PERIOD = 10s).
+    Suporta três modos do Conflict Mitigation Framework:
+    - no_CM: aplica MRO e MLB sem resolução de prioridade
+    - prio_MRO: prioriza ajustes de MRO quando há instabilidade
+    - prio_MLB: prioriza ajustes de MLB quando há carga alta
+
     Args:
         bs_list: Lista de BSs
         current_time: Tempo atual
+        mode: Modo de conflito do RIC
     """
-    ric_mro_update(bs_list, current_time)
-    ric_mlb_update(bs_list)
+    if mode not in CMF_MODES:
+        raise ValueError(f"Modo CMF desconhecido: {mode}")
+
+    if mode == "no_CM":
+        ric_mro_update(bs_list, current_time)
+        ric_mlb_update(bs_list)
+        return
+
+    if mode == "prio_MRO":
+        ric_mro_update(bs_list, current_time)
+        for bs in bs_list:
+            if not _mro_conflict_priority(bs):
+                bs.cio_db = choose_cio_from_load(bs.load())
+        return
+
+    if mode == "prio_MLB":
+        ric_mlb_update(bs_list)
+        for bs in bs_list:
+            if not _mlb_priority(bs):
+                total_ho = len(bs.ho_events)
+                total_pp = len(bs.pingpong_events)
+                total_rlf = len(bs.rlf_events)
+                pp_ratio = total_pp / total_ho if total_ho > 0 else 0.0
+                rlf_ratio = total_rlf / total_ho if total_ho > 0 else 0.0
+                bs.ttt_s = choose_ttt_from_pingpong_ratio(pp_ratio)
+                bs.hysteresis_db = choose_hysteresis_from_rlf_ratio(rlf_ratio)
+        return
 
 
-# ============================================================
-# SIMULAÇÃO PRINCIPAL
-# ============================================================
-# Implementa o loop principal de simulação:
-#
-# Processo em cada passo de tempo (50ms):
-# 1. Atualiza parâmetros do RIC (a cada 10s)
-# 2. Para cada usuário:
-#    a. Atualiza posição (mobilidade)
-#    b. Se conectado:
-#       - Incrementa tempo conectado
-#       - Verifica fim de conexão
-#       - Verifica RLF
-#       - Executa lógica de handover A3
-#    c. Se desconectado:
-#       - Tenta estabelecer conexão
-#       - Conta tentativas bloqueadas
-# 3. Coleta métricas:
-#    - Carga média e máxima das BSs
-#    - Usuários conectados
-#    - Handovers, ping-pongs, RLFs
-#    - Tentativas bloqueadas
-#
-# Retorna:
-# - bs_list: lista de estações base
-# - users: lista de usuários
-# - poly: polígono da área
-# - results: dicionário com métricas
+def _format_csv_float(value, decimals=4):
+    """Formata floats para CSV mantendo pelo menos uma casa decimal."""
+    if not np.isfinite(value):
+        return "nan"
+    rounded = round(float(value), decimals)
+    text = f"{rounded:.{decimals}f}".rstrip("0").rstrip(".")
+    if "." not in text:
+        text += ".0"
+    return text
 
-def run_simulation(show_progress=False):
+
+def _record_bs_state(bs_history, bs_list, current_time):
+    """Registra estado por estação base no formato dos CSVs de resultados."""
+    for bs in bs_list:
+        availability = max(0.0, min(1.0, 1.0 - bs.load()))
+        bs_history[bs.bs_id].append({
+            "time": float(current_time),
+            "current bs": int(bs.bs_id),
+            "availability": availability,
+            "cio": float(bs.cio_db),
+            "hyst": float(bs.hysteresis_db),
+            "ttt": float(bs.ttt_s),
+        })
+
+
+def _load_balance_ratio(loads):
+    """Calcula o índice de Jain para balanceamento de carga."""
+    loads = np.array(loads, dtype=float)
+    squared_sum = np.sum(loads ** 2)
+    if squared_sum <= 0:
+        return float("nan")
+    return float((np.sum(loads) ** 2) / (len(loads) * squared_sum))
+
+
+def _write_bs_result_csvs(bs_history, cmf_mode):
+    """Escreve um CSV por BS em simulation_results/<modo>."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
+    mode_dir = os.path.join(base_dir, cmf_mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    written_files = []
+
+    for bs_id in sorted(bs_history):
+        path = os.path.join(mode_dir, f"bs-{bs_id}_{timestamp}_{suffix}.csv")
+        with open(path, "w", newline="", encoding="utf-8") as csvfile:
+            writer = csv.writer(csvfile)
+            writer.writerow(["time", "current bs", "availability", "cio", "hyst", "ttt"])
+            for row in bs_history[bs_id]:
+                writer.writerow([
+                    _format_csv_float(row["time"], 1),
+                    row["current bs"],
+                    _format_csv_float(row["availability"], 4),
+                    _format_csv_float(row["cio"], 4),
+                    _format_csv_float(row["hyst"], 4),
+                    _format_csv_float(row["ttt"], 4),
+                ])
+        written_files.append(path)
+
+    return written_files
+
+
+def _write_load_balance_csv(load_balance_history, cmf_mode):
+    """Escreve a série temporal do índice de balanceamento no formato lb_*.csv."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
+    mode_dir = os.path.join(base_dir, cmf_mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    path = os.path.join(mode_dir, f"lb_{timestamp}_{suffix}.csv")
+
+    with open(path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["time", "lb ratio"])
+        for row in load_balance_history:
+            writer.writerow([
+                _format_csv_float(row["time"], 1),
+                _format_csv_float(row["lb ratio"], 16),
+            ])
+
+    return path
+
+
+def _write_availability_csv(availability_history, cmf_mode):
+    """Escreve a série temporal da disponibilidade média em simulation_results/<modo>."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
+    mode_dir = os.path.join(base_dir, cmf_mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    path = os.path.join(mode_dir, f"avail_{timestamp}_{suffix}.csv")
+
+    with open(path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["time", "availability"])
+        for row in availability_history:
+            writer.writerow([
+                _format_csv_float(row["time"], 1),
+                _format_csv_float(row["availability"], 16),
+            ])
+
+    return path
+
+
+def _write_satisfaction_csv(satisfaction_history, cmf_mode):
+    """Escreve a série temporal de satisfação média de usuários em simulation_results/<modo>."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
+    mode_dir = os.path.join(base_dir, cmf_mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    path = os.path.join(mode_dir, f"satis_{timestamp}_{suffix}.csv")
+
+    with open(path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["time", "satisfaction"])
+        for row in satisfaction_history:
+            writer.writerow([
+                _format_csv_float(row["time"], 1),
+                _format_csv_float(row["satisfaction"], 16),
+            ])
+
+    return path
+
+
+def _write_connection_block_csv(blocked_connection_events, cmf_mode):
+    """Escreve eventos de conexões bloqueadas no formato cb_*.csv."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
+    mode_dir = os.path.join(base_dir, cmf_mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    path = os.path.join(mode_dir, f"cb_{timestamp}_{suffix}.csv")
+
+    with open(path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["time", "user", "x pos", "y pos"])
+        for event in blocked_connection_events:
+            writer.writerow([
+                _format_csv_float(event["time"], 12),
+                event["user"],
+                _format_csv_float(event["x pos"], 12),
+                _format_csv_float(event["y pos"], 12),
+            ])
+
+    return path
+
+
+def _write_handover_csv(handover_events, cmf_mode):
+    """Escreve eventos de handover no formato ho_*.csv."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
+    mode_dir = os.path.join(base_dir, cmf_mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    path = os.path.join(mode_dir, f"ho_{timestamp}_{suffix}.csv")
+
+    with open(path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["time", "previous bs", "current bs", "user", "conn_sinr", "x pos", "y pos"])
+        for event in handover_events:
+            writer.writerow([
+                _format_csv_float(event["time"], 12),
+                event["previous bs"],
+                event["current bs"],
+                event["user"],
+                _format_csv_float(event["conn_sinr"], 12),
+                _format_csv_float(event["x pos"], 12),
+                _format_csv_float(event["y pos"], 12),
+            ])
+
+    return path
+
+
+def _write_pingpong_csv(pingpong_events, cmf_mode):
+    """Escreve eventos de ping-pong no formato pp_*.csv."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
+    mode_dir = os.path.join(base_dir, cmf_mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    path = os.path.join(mode_dir, f"pp_{timestamp}_{suffix}.csv")
+
+    with open(path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["time", "current bs", "user", "conn_sinr", "x pos", "y pos", "ho pp time"])
+        for event in pingpong_events:
+            writer.writerow([
+                _format_csv_float(event["time"], 12),
+                event["current bs"],
+                event["user"],
+                _format_csv_float(event["conn_sinr"], 12),
+                _format_csv_float(event["x pos"], 12),
+                _format_csv_float(event["y pos"], 12),
+                _format_csv_float(event["ho pp time"], 12),
+            ])
+
+    return path
+
+
+def _write_rlf_csv(rlf_events, cmf_mode):
+    """Escreve eventos de Radio Link Failure no formato rlf_*.csv."""
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
+    mode_dir = os.path.join(base_dir, cmf_mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    path = os.path.join(mode_dir, f"rlf_{timestamp}_{suffix}.csv")
+
+    with open(path, "w", newline="", encoding="utf-8") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["time", "current bs", "user", "conn_sinr", "x pos", "y pos"])
+        for event in rlf_events:
+            writer.writerow([
+                _format_csv_float(event["time"], 12),
+                event["current bs"],
+                event["user"],
+                _format_csv_float(event["conn_sinr"], 12),
+                _format_csv_float(event["x pos"], 12),
+                _format_csv_float(event["y pos"], 12),
+            ])
+
+    return path
+
+
+def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf_mode=CMF_MODE, export_bs_results=True):
     """Executa a simulação completa da rede celular.
     
     Args:
         show_progress: Se True, imprime o progresso da simulação.
+        step_callback: Função chamada a cada passo com o snapshot atual.
+        stop_event: threading.Event para interromper a simulação.
+        export_bs_results: Se True, gera CSV por BS em simulation_results/<modo>.
 
     Returns:
         Tupla (bs_list, users, poly, results)
@@ -1375,6 +1753,15 @@ def run_simulation(show_progress=False):
     pingpong_history = []
     rlf_history = []
     blocked_attempts_history = []
+    bs_history = {bs.bs_id: [] for bs in bs_list}
+    load_balance_history = []
+    availability_history = []
+    satisfaction_history = []
+    blocked_connection_events = []
+    handover_events = []
+    pingpong_events = []
+    rlf_events = []
+    attempted_users = set()
 
     # Contadores acumulados
     total_blocked_attempts = 0
@@ -1384,6 +1771,7 @@ def run_simulation(show_progress=False):
 
     # Próxima atualização do RIC
     next_ric_time = 0.0
+    next_bs_log_time = 0.0
 
     # Loop principal de simulação
     for step in range(STEPS):
@@ -1391,7 +1779,7 @@ def run_simulation(show_progress=False):
 
         # Atualiza parâmetros do RIC a cada 10 segundos
         if current_time >= next_ric_time:
-            ric_update(bs_list, current_time)
+            ric_update(bs_list, current_time, cmf_mode)
             next_ric_time += RIC_CONTROL_PERIOD
 
         blocked_this_step = 0
@@ -1412,18 +1800,31 @@ def run_simulation(show_progress=False):
                     continue
 
                 # Verifica RLF
-                if check_rlf(ue, bs_list, current_time):
+                rlf_event = check_rlf(ue, bs_list, current_time)
+                if rlf_event is not None:
+                    rlf_events.append(rlf_event)
                     continue
 
                 # Executa lógica de handover
-                a3_handover_logic(ue, bs_list, current_time, DT)
+                handover_event = a3_handover_logic(ue, bs_list, current_time, DT)
+                if handover_event is not None:
+                    handover_events.append(handover_event)
+                    if handover_event["pingpong"] is not None:
+                        pingpong_events.append(handover_event["pingpong"])
 
             else:
                 # Usuário desconectado: tenta conectar
                 if current_time >= ue.next_attempt_time:
+                    attempted_users.add(int(ue.ue_id))
                     established = try_establish_connection(ue, bs_list, current_time)
 
                     if not established:
+                        blocked_connection_events.append({
+                            "time": float(ue.next_attempt_time),
+                            "user": int(ue.ue_id),
+                            "x pos": float(ue.x),
+                            "y pos": float(ue.y),
+                        })
                         total_blocked_attempts += 1
                         blocked_this_step += 1
                         ue.next_attempt_time = generate_next_attempt_time(current_time)
@@ -1452,6 +1853,65 @@ def run_simulation(show_progress=False):
         last_total_pp = total_pp
         last_total_rlf = total_rlf
 
+        if current_time + 1e-12 >= next_bs_log_time:
+            _record_bs_state(bs_history, bs_list, next_bs_log_time)
+            load_balance_history.append({
+                "time": float(next_bs_log_time),
+                "lb ratio": _load_balance_ratio(loads),
+            })
+            availability_history.append({
+                "time": float(next_bs_log_time),
+                "availability": float(np.mean([1.0 - load for load in loads])),
+            })
+            attempted_count = len(attempted_users)
+            satisfaction_history.append({
+                "time": float(next_bs_log_time),
+                "satisfaction": float(connected_users) / attempted_count if attempted_count > 0 else float("nan"),
+            })
+            next_bs_log_time += 1.0
+
+        if step_callback is not None:
+            snapshot = {
+                "step": step + 1,
+                "steps": STEPS,
+                "time": current_time,
+                "progress": round((step + 1) * 100.0 / max(STEPS, 1), 1),
+                "connected_users": connected_users,
+                "avg_load": float(np.mean(loads)),
+                "max_load": float(np.max(loads)),
+                "handovers": total_ho,
+                "pingpongs": total_pp,
+                "rlfs": total_rlf,
+                "blocked_attempts": blocked_this_step,
+                "total_blocked_attempts": total_blocked_attempts,
+                "bs": [
+                    {
+                        "id": bs.bs_id,
+                        "x": float(bs.x),
+                        "y": float(bs.y),
+                        "load": float(bs.load()),
+                        "used_prbs": int(bs.used_prbs),
+                    }
+                    for bs in bs_list
+                ],
+                "ues": [
+                    {
+                        "id": ue.ue_id,
+                        "x": float(ue.x),
+                        "y": float(ue.y),
+                        "color": ue.color,
+                        "connected": bool(ue.connected),
+                        "serving_bs": ue.serving_bs,
+                        "speed": float(ue.speed),
+                    }
+                    for ue in users
+                ],
+            }
+            step_callback(snapshot)
+
+        if stop_event is not None and stop_event.is_set():
+            break
+
         if show_progress and (step % max(1, STEPS // 40) == 0 or step == STEPS - 1):
             percent = (step + 1) * 100.0 / STEPS
             print(f"\rSimulação: passo {step + 1}/{STEPS} ({percent:.1f}%)", end="", flush=True)
@@ -1472,13 +1932,23 @@ def run_simulation(show_progress=False):
         "total_blocked_attempts": total_blocked_attempts,
     }
 
+    if export_bs_results:
+        results["bs_result_files"] = _write_bs_result_csvs(bs_history, cmf_mode)
+        results["load_balance_file"] = _write_load_balance_csv(load_balance_history, cmf_mode)
+        results["availability_file"] = _write_availability_csv(availability_history, cmf_mode)
+        results["satisfaction_file"] = _write_satisfaction_csv(satisfaction_history, cmf_mode)
+        results["connection_block_file"] = _write_connection_block_csv(blocked_connection_events, cmf_mode)
+        results["handover_file"] = _write_handover_csv(handover_events, cmf_mode)
+        results["pingpong_file"] = _write_pingpong_csv(pingpong_events, cmf_mode)
+        results["rlf_file"] = _write_rlf_csv(rlf_events, cmf_mode)
+
     return bs_list, users, poly, results
 
 
-def run_simulation_worker(seed):
+def run_simulation_worker(seed, cmf_mode=CMF_MODE):
     """Executa uma simulação independente em processo separado."""
     np.random.seed(seed)
-    bs_list, users, poly, results = run_simulation(show_progress=False)
+    bs_list, users, poly, results = run_simulation(show_progress=False, cmf_mode=cmf_mode, export_bs_results=False)
     return {
         "seed": seed,
         "total_handovers": int(np.sum(results["handovers"])),
@@ -1489,7 +1959,7 @@ def run_simulation_worker(seed):
     }
 
 
-def run_simulation_parallel(repetitions=2, workers=None):
+def run_simulation_parallel(repetitions=2, workers=None, cmf_mode=CMF_MODE):
     workers = workers or os.cpu_count() or 1
     print(f"Executando {repetitions} simulações em paralelo usando {workers} workers...")
     seeds = [42 + i for i in range(repetitions)]
@@ -1502,7 +1972,7 @@ def run_simulation_parallel(repetitions=2, workers=None):
         return f"[{bar}] {completed}/{total} ({pct * 100:.1f}%)"
 
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(run_simulation_worker, seed) for seed in seeds]
+        futures = [executor.submit(run_simulation_worker, seed, cmf_mode) for seed in seeds]
 
         for completed, future in enumerate(concurrent.futures.as_completed(futures), start=1):
             metrics.append(future.result())
@@ -1691,6 +2161,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Simulação O-RAN com progresso e execução paralela.")
     parser.add_argument("--runs", "-r", type=int, default=1, help="Número de simulações independentes a executar em paralelo")
     parser.add_argument("--workers", "-w", type=int, default=os.cpu_count() or 1, help="Número de workers a usar em ProcessPoolExecutor")
+    parser.add_argument("--cmf-mode", type=str, default=CMF_MODE, choices=CMF_MODES, help="Modo do Conflict Mitigation Framework")
     parser.add_argument("--no-plots", action="store_true", help="Não exibir os gráficos ao final")
     return parser.parse_args()
 
@@ -1698,9 +2169,12 @@ def parse_args():
 def main():
     args = parse_args()
 
+    cmf_mode = args.cmf_mode
+
     if args.runs <= 1:
         # Executa a simulação única com progresso
-        bs_list, users, poly, results = run_simulation(show_progress=True)
+        bs_list, users, poly, results = run_simulation(show_progress=True, cmf_mode=cmf_mode)
+        print(f"Modo CMF: {cmf_mode}")
         print_summary(bs_list, users, results)
 
         if not args.no_plots:
@@ -1709,7 +2183,7 @@ def main():
         return
 
     # Executa simulações paralelas usando todos os núcleos disponíveis
-    metrics = run_simulation_parallel(repetitions=args.runs, workers=args.workers)
+    metrics = run_simulation_parallel(repetitions=args.runs, workers=args.workers, cmf_mode=cmf_mode)
 
     total_handovers = np.array([m["total_handovers"] for m in metrics])
     total_pingpongs = np.array([m["total_pingpongs"] for m in metrics])
