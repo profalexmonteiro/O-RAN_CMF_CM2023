@@ -41,6 +41,7 @@ USERS_PER_BS = 20  # 20 usuários por BS = 380 usuários total
 N_USERS = N_BS * USERS_PER_BS  # Total de usuários na simulação
 
 INTER_SITE_DISTANCE = 600.0  # Distância entre sites (metros)
+SIMULATION_AREA_MARGIN_FACTOR = 1.5  # Margem do polígono em múltiplos da distância entre sites
 
 SIM_TIME = 1000.0  # Tempo total de simulação: 1000 segundos
 DT = 0.05  # Passo de tempo: 50ms (cada step = 50ms)
@@ -190,6 +191,7 @@ MRO_WINDOW = 240.0  # Janela para cálculo de métricas MRO (s)
 PINGPONG_PERIOD = 10.0  # Período para detectar ping-pong (s)
 CMF_MODE = "no_CM"
 CMF_MODES = ("no_CM", "prio_MRO", "prio_MLB")
+STATISTICS_IGNORE_INITIAL_S = 150.0  # Ignora a instabilidade inicial nas estatisticas finais
 
 # Thresholds para detecção de RLF (Radio Link Failure)
 RLF_SINR_THRESHOLD_DB = -6.0  # SINR mínimo: -6 dB
@@ -460,24 +462,87 @@ def generate_19_bs_hex_grid(isd=None, center_x=1000, center_y=1000, n_bs=None):
     return [BaseStation(i + 1, x, y) for i, (x, y) in enumerate(coords)]
 
 
-def simulation_polygon():
-    """Define o polígono que representa a área de simulação.
-    
+def _convex_hull(points):
+    """Calcula a envoltória convexa dos pontos usando monotonic chain."""
+    pts = sorted({(float(x), float(y)) for x, y in points})
+    if len(pts) <= 1:
+        return np.array(pts)
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower = []
+    for point in pts:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], point) <= 0:
+            lower.pop()
+        lower.append(point)
+
+    upper = []
+    for point in reversed(pts):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], point) <= 0:
+            upper.pop()
+        upper.append(point)
+
+    return np.array(lower[:-1] + upper[:-1])
+
+
+def _expand_polygon_from_centroid(poly, margin_m):
+    """Expande o polígono radialmente para aproximar a borda de cobertura."""
+    if len(poly) == 0:
+        return poly
+
+    center = poly.mean(axis=0)
+    expanded = []
+    for point in poly:
+        vector = point - center
+        norm = np.linalg.norm(vector)
+        if norm < 1e-9:
+            expanded.append(point)
+        else:
+            expanded.append(center + vector / norm * (norm + margin_m))
+    return np.array(expanded)
+
+
+def simulation_polygon(bs_list=None, coverage_margin_m=None):
+    """Define dinamicamente o polígono que representa a área de simulação.
+
+    O polígono é calculado a partir da envoltória das estações base e expandido
+    por uma margem de cobertura. Assim, mudanças em N_BS ou INTER_SITE_DISTANCE
+    ajustam automaticamente a área onde os usuários são criados e se movem.
+
+    Args:
+        bs_list: Lista de estações base usadas na simulação.
+        coverage_margin_m: Margem extra em metros ao redor das BSs externas.
+
     Returns:
         Array numpy com coordenadas dos vértices do polígono
     """
-    return np.array([
-        [-2000, 1000],
-        [-800, 3400],
-        [-200, 4000],
-        [2200, 4000],
-        [2800, 3400],
-        [3800, 1000],
-        [2800, -1400],
-        [2200, -2000],
-        [-200, -2000],
-        [-800, -1400],
-    ])
+    if bs_list is None:
+        bs_list = generate_19_bs_hex_grid(n_bs=N_BS)
+
+    margin_m = (
+        float(coverage_margin_m)
+        if coverage_margin_m is not None
+        else float(INTER_SITE_DISTANCE) * float(SIMULATION_AREA_MARGIN_FACTOR)
+    )
+    margin_m = max(margin_m, 1.0)
+    points = np.array([[bs.x, bs.y] for bs in bs_list], dtype=float)
+
+    if len(points) == 0:
+        return np.array([])
+
+    if len(points) < 3:
+        min_x, min_y = points.min(axis=0) - margin_m
+        max_x, max_y = points.max(axis=0) + margin_m
+        return np.array([
+            [min_x, min_y],
+            [max_x, min_y],
+            [max_x, max_y],
+            [min_x, max_y],
+        ])
+
+    hull = _convex_hull(points)
+    return _expand_polygon_from_centroid(hull, margin_m)
 
 
 def point_inside_polygon(x, y, poly):
@@ -1500,6 +1565,27 @@ def _load_balance_ratio(loads):
     return float((np.sum(loads) ** 2) / (len(loads) * squared_sum))
 
 
+def _statistics_mask(time_values):
+    """Retorna a mascara da janela usada nos indicadores do artigo."""
+    return np.asarray(time_values, dtype=float) >= STATISTICS_IGNORE_INITIAL_S
+
+
+def summarize_performance(results):
+    """Calcula as metricas finais ignorando os primeiros 150 segundos."""
+    mask = _statistics_mask(results["time"])
+    if not np.any(mask):
+        mask = np.ones_like(results["time"], dtype=bool)
+
+    return {
+        "mean_bs_load": float(np.mean(results["avg_load"][mask])),
+        "mean_user_satisfaction": float(np.nanmean(results["satisfaction"][mask])),
+        "total_blocked_attempts": int(np.sum(results["blocked_attempts"][mask])),
+        "total_rlfs": int(np.sum(results["rlfs"][mask])),
+        "total_handovers": int(np.sum(results["handovers"][mask])),
+        "total_pingpongs": int(np.sum(results["pingpongs"][mask])),
+    }
+
+
 def _csv_timestamp():
     now = datetime.now()
     weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
@@ -1722,7 +1808,7 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
     """
     # Inicializa rede
     bs_list = generate_19_bs_hex_grid(n_bs=N_BS)
-    poly = simulation_polygon()
+    poly = simulation_polygon(bs_list)
     users = create_users(poly)
 
     # Listas para histórico de métricas
@@ -1730,6 +1816,7 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
     avg_load_history = []
     max_load_history = []
     connected_users_history = []
+    satisfaction_history_steps = []
     handover_history = []
     pingpong_history = []
     rlf_history = []
@@ -1749,6 +1836,13 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
     last_total_ho = 0
     last_total_pp = 0
     last_total_rlf = 0
+    stats_total_ho = 0
+    stats_total_pp = 0
+    stats_total_rlf = 0
+    stats_total_blocked = 0
+    stats_load_sum = 0.0
+    stats_satisfaction_sum = 0.0
+    stats_samples = 0
 
     # Próxima atualização do RIC
     next_ric_time = 0.0
@@ -1814,20 +1908,36 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
         total_ho = sum(ue.total_handovers for ue in users)
         total_pp = sum(ue.total_pingpongs for ue in users)
         total_rlf = sum(ue.total_rlfs for ue in users)
+        ho_this_step = total_ho - last_total_ho
+        pp_this_step = total_pp - last_total_pp
+        rlf_this_step = total_rlf - last_total_rlf
 
         loads = [bs.load() for bs in bs_list]
         connected_users = sum(1 for ue in users if ue.connected)
+        attempted_count = len(attempted_users)
+        satisfaction = float(connected_users) / attempted_count if attempted_count > 0 else float("nan")
 
         # Registra no histórico
         time_history.append(current_time)
         avg_load_history.append(np.mean(loads))
         max_load_history.append(np.max(loads))
         connected_users_history.append(connected_users)
+        satisfaction_history_steps.append(satisfaction)
 
-        handover_history.append(total_ho - last_total_ho)
-        pingpong_history.append(total_pp - last_total_pp)
-        rlf_history.append(total_rlf - last_total_rlf)
+        handover_history.append(ho_this_step)
+        pingpong_history.append(pp_this_step)
+        rlf_history.append(rlf_this_step)
         blocked_attempts_history.append(blocked_this_step)
+
+        if current_time >= STATISTICS_IGNORE_INITIAL_S:
+            stats_total_ho += ho_this_step
+            stats_total_pp += pp_this_step
+            stats_total_rlf += rlf_this_step
+            stats_total_blocked += blocked_this_step
+            stats_load_sum += float(np.mean(loads))
+            if np.isfinite(satisfaction):
+                stats_satisfaction_sum += satisfaction
+            stats_samples += 1
 
         # Atualiza contadores
         last_total_ho = total_ho
@@ -1844,30 +1954,41 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
                 "time": float(next_bs_log_time),
                 "availability": float(np.mean([1.0 - load for load in loads])),
             })
-            attempted_count = len(attempted_users)
             satisfaction_history.append({
                 "time": float(next_bs_log_time),
-                "satisfaction": float(connected_users) / attempted_count if attempted_count > 0 else float("nan"),
+                "satisfaction": satisfaction,
             })
             next_bs_log_time += 1.0
 
         if step_callback is not None:
-            attempted_count = len(attempted_users)
-            satisfaction = float(connected_users) / attempted_count if attempted_count > 0 else 0.0
+            stats_satisfaction = (
+                stats_satisfaction_sum / stats_samples
+                if stats_samples > 0
+                else (satisfaction if np.isfinite(satisfaction) else 0.0)
+            )
             snapshot = {
                 "step": step + 1,
                 "steps": STEPS,
                 "time": current_time,
                 "progress": round((step + 1) * 100.0 / max(STEPS, 1), 1),
                 "connected_users": connected_users,
-                "satisfaction": satisfaction,
-                "avg_load": float(np.mean(loads)),
+                "satisfaction": stats_satisfaction,
+                "avg_load": stats_load_sum / stats_samples if stats_samples > 0 else float(np.mean(loads)),
                 "max_load": float(np.max(loads)),
-                "handovers": total_ho,
-                "pingpongs": total_pp,
-                "rlfs": total_rlf,
+                "handovers": stats_total_ho,
+                "pingpongs": stats_total_pp,
+                "rlfs": stats_total_rlf,
                 "blocked_attempts": blocked_this_step,
-                "total_blocked_attempts": total_blocked_attempts,
+                "total_blocked_attempts": stats_total_blocked,
+                "raw_handovers": total_ho,
+                "raw_pingpongs": total_pp,
+                "raw_rlfs": total_rlf,
+                "raw_total_blocked_attempts": total_blocked_attempts,
+                "statistics_start_time": STATISTICS_IGNORE_INITIAL_S,
+                "area_polygon": [
+                    {"x": float(point[0]), "y": float(point[1])}
+                    for point in poly
+                ],
                 "bs": [
                     {
                         "id": bs.bs_id,
@@ -1909,12 +2030,15 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
         "avg_load": np.array(avg_load_history),
         "max_load": np.array(max_load_history),
         "connected_users": np.array(connected_users_history),
+        "satisfaction": np.array(satisfaction_history_steps),
         "handovers": np.array(handover_history),
         "pingpongs": np.array(pingpong_history),
         "rlfs": np.array(rlf_history),
         "blocked_attempts": np.array(blocked_attempts_history),
         "total_blocked_attempts": total_blocked_attempts,
+        "statistics_start_time": STATISTICS_IGNORE_INITIAL_S,
     }
+    results["performance_summary"] = summarize_performance(results)
 
     if export_bs_results:
         results["bs_result_files"] = _write_bs_result_csvs(bs_history, cmf_mode)
@@ -1933,12 +2057,15 @@ def run_simulation_worker(seed, cmf_mode=CMF_MODE):
     """Executa uma simulação independente em processo separado."""
     np.random.seed(seed)
     bs_list, users, poly, results = run_simulation(show_progress=False, cmf_mode=cmf_mode, export_bs_results=False)
+    summary = results["performance_summary"]
     return {
         "seed": seed,
-        "total_handovers": int(np.sum(results["handovers"])),
-        "total_pingpongs": int(np.sum(results["pingpongs"])),
-        "total_rlfs": int(np.sum(results["rlfs"])),
-        "total_blocked_attempts": int(results["total_blocked_attempts"]),
+        "mean_bs_load": summary["mean_bs_load"],
+        "mean_user_satisfaction": summary["mean_user_satisfaction"],
+        "total_handovers": summary["total_handovers"],
+        "total_pingpongs": summary["total_pingpongs"],
+        "total_rlfs": summary["total_rlfs"],
+        "total_blocked_attempts": summary["total_blocked_attempts"],
         "connected_final": int(results["connected_users"][-1]),
     }
 
@@ -2083,10 +2210,11 @@ def print_summary(bs_list, users, results):
         users: Lista de usuários
         results: Dicionário com resultados
     """
-    # Calcula totais
-    total_ho = sum(ue.total_handovers for ue in users)
-    total_pp = sum(ue.total_pingpongs for ue in users)
-    total_rlf = sum(ue.total_rlfs for ue in users)
+    # Calcula totais na janela estatistica do artigo.
+    summary = results["performance_summary"]
+    total_ho = summary["total_handovers"]
+    total_pp = summary["total_pingpongs"]
+    total_rlf = summary["total_rlfs"]
 
     connected_final = sum(1 for ue in users if ue.connected)
 
@@ -2096,11 +2224,14 @@ def print_summary(bs_list, users, results):
     print(f"Base stations: {len(bs_list)}")
     print(f"Usuários: {len(users)}")
     print(f"PRBs por BS: {TOTAL_PRBS_PER_BS}")
+    print(f"Janela estatistica: {STATISTICS_IGNORE_INITIAL_S:.0f}s a {SIM_TIME:.0f}s")
+    print(f"Load medio das BSs: {summary['mean_bs_load'] * 100:.1f}%")
+    print(f"Satisfacao media dos usuarios: {summary['mean_user_satisfaction'] * 100:.1f}%")
     print(f"Usuários conectados no fim: {connected_final}")
     print(f"Total de handovers: {total_ho}")
     print(f"Total de ping-pongs: {total_pp}")
     print(f"Total de RLFs: {total_rlf}")
-    print(f"Tentativas bloqueadas: {results['total_blocked_attempts']}")
+    print(f"Tentativas bloqueadas: {summary['total_blocked_attempts']}")
 
     # Imprime razões
     if total_ho > 0:
@@ -2173,6 +2304,8 @@ def main():
     total_pingpongs = np.array([m["total_pingpongs"] for m in metrics])
     total_rlfs = np.array([m["total_rlfs"] for m in metrics])
     total_blocked = np.array([m["total_blocked_attempts"] for m in metrics])
+    mean_load = np.array([m["mean_bs_load"] for m in metrics])
+    mean_satisfaction = np.array([m["mean_user_satisfaction"] for m in metrics])
     connected_final = np.array([m["connected_final"] for m in metrics])
 
     print("\nResumo agregado das simulações paralelas:")

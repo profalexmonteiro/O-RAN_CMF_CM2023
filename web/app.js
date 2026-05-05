@@ -918,7 +918,11 @@ function chooseGridStep(span) {
 }
 
 function buildSceneBounds(snapshot) {
-    const points = [...(snapshot.bs || []), ...(snapshot.ues || [])].filter(
+    const points = [
+        ...(snapshot.area_polygon || []),
+        ...(snapshot.bs || []),
+        ...(snapshot.ues || []),
+    ].filter(
         (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
     );
 
@@ -945,9 +949,9 @@ function buildSceneBounds(snapshot) {
     const spanX = Math.max(rawMaxX - rawMinX, 1);
     const spanY = Math.max(rawMaxY - rawMinY, 1);
     const padding = Math.max(spanX, spanY, 600) * 0.12;
-    const minX = Math.max(0, rawMinX - padding);
+    const minX = rawMinX - padding;
     const maxX = rawMaxX + padding;
-    const minY = Math.max(0, rawMinY - padding);
+    const minY = rawMinY - padding;
     const maxY = rawMaxY + padding;
     const tickStep = chooseGridStep(Math.max(maxX - minX, maxY - minY));
 
@@ -992,6 +996,7 @@ function alignSnapshotToAntennaOrigin(snapshot) {
         ...snapshot,
         bs: (snapshot.bs || []).map(shiftPoint),
         ues: (snapshot.ues || []).map(shiftPoint),
+        area_polygon: (snapshot.area_polygon || []).map(shiftPoint),
         coordinateShift: { x: shiftX, y: shiftY },
     };
 }
@@ -1037,16 +1042,89 @@ function previewBaseStations(nBs, isd) {
         }));
 }
 
+function convexHull(points) {
+    const unique = Array.from(
+        new Map(
+            points
+                .filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
+                .map((point) => [`${point.x},${point.y}`, { x: point.x, y: point.y }])
+        ).values()
+    ).sort((a, b) => a.x - b.x || a.y - b.y);
+
+    if (unique.length <= 1) return unique;
+
+    const cross = (origin, a, b) =>
+        (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
+
+    const lower = [];
+    unique.forEach((point) => {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], point) <= 0) {
+            lower.pop();
+        }
+        lower.push(point);
+    });
+
+    const upper = [];
+    [...unique].reverse().forEach((point) => {
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], point) <= 0) {
+            upper.pop();
+        }
+        upper.push(point);
+    });
+
+    return lower.slice(0, -1).concat(upper.slice(0, -1));
+}
+
+function buildSimulationPolygon(bs, isd) {
+    const margin = Math.max((Number.isFinite(isd) ? isd : 600) * 1.5, 1);
+    const points = bs || [];
+
+    if (points.length === 0) return [];
+    if (points.length < 3) {
+        const xs = points.map((point) => point.x);
+        const ys = points.map((point) => point.y);
+        const minX = Math.min(...xs) - margin;
+        const maxX = Math.max(...xs) + margin;
+        const minY = Math.min(...ys) - margin;
+        const maxY = Math.max(...ys) + margin;
+        return [
+            { x: minX, y: minY },
+            { x: maxX, y: minY },
+            { x: maxX, y: maxY },
+            { x: minX, y: maxY },
+        ];
+    }
+
+    const hull = convexHull(points);
+    const center = {
+        x: hull.reduce((sum, point) => sum + point.x, 0) / hull.length,
+        y: hull.reduce((sum, point) => sum + point.y, 0) / hull.length,
+    };
+
+    return hull.map((point) => {
+        const dx = point.x - center.x;
+        const dy = point.y - center.y;
+        const length = Math.hypot(dx, dy);
+        if (length < 1e-9) return { ...point };
+        return {
+            x: center.x + (dx / length) * (length + margin),
+            y: center.y + (dy / length) * (length + margin),
+        };
+    });
+}
+
 function drawConfiguredTopologyPreview() {
     const nBs = parseInt($("n_bs")?.value, 10) || 19;
     const interSiteDistance = numberValue("inter_site_distance", 600);
+    const bs = previewBaseStations(nBs, interSiteDistance);
     const preview = {
         preview: true,
         step: 0,
         steps: 0,
         time: 0,
         progress: 0,
-        bs: previewBaseStations(nBs, interSiteDistance),
+        area_polygon: buildSimulationPolygon(bs, interSiteDistance),
+        bs,
         ues: [],
     };
 
@@ -1159,6 +1237,31 @@ function drawScene(snapshot) {
     }
 
     drawAxes(ctx, bounds, transformX, transformY, width, height, margin);
+
+    // Draw simulation area
+    const areaPolygon = (displaySnapshot.area_polygon || []).filter(
+        (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+    );
+    if (areaPolygon.length >= 3) {
+        ctx.save();
+        ctx.beginPath();
+        areaPolygon.forEach((point, index) => {
+            const x = transformX(point.x);
+            const y = transformY(point.y);
+            if (index === 0) {
+                ctx.moveTo(x, y);
+            } else {
+                ctx.lineTo(x, y);
+            }
+        });
+        ctx.closePath();
+        ctx.fillStyle = "rgba(69, 123, 157, 0.08)";
+        ctx.strokeStyle = "#457b9d";
+        ctx.lineWidth = 2;
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
+    }
 
     // Draw BS positions
     (displaySnapshot.bs || []).forEach((bs) => {

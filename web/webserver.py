@@ -22,6 +22,7 @@ PARAM_TYPES = {
     "USERS_PER_BS": int,
     "N_USERS": int,
     "INTER_SITE_DISTANCE": float,
+    "SIMULATION_AREA_MARGIN_FACTOR": float,
     "SIM_TIME": float,
     "DT": float,
     "BS_TX_POWER_DBM": float,

@@ -12,7 +12,7 @@ ComMag 2023
 1. base stations and simulation area:
     - 19 base stations (BS) distributed on a hexagonal grid
     - distance between each BS is equal to 600 meters
-    - simulation area is limited with a polygonal shapre approximating coverage distance of the network
+    - simulation area is dynamically limited by a polygonal shape approximating the network coverage area
     - coverage provided by each BS is not split into sectors
     - all base stations have the same parameters:
         - antenna gain: 2 dB
