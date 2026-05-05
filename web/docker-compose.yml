@@ -1,8 +1,8 @@
 services:
   web:
     build:
-      context: .
-      dockerfile: Dockerfile
+      context: ..
+      dockerfile: web/Dockerfile
     container_name: oran-cmf-web
     ports:
       - "80:8000"
@@ -10,5 +10,5 @@ services:
       PYTHONUNBUFFERED: "1"
       MPLBACKEND: Agg
     volumes:
-      - .:/app
+      - ..:/app
     restart: unless-stopped
