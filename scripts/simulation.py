@@ -857,6 +857,32 @@ def required_prbs_for_user(ue, sinr_db):
     return int(np.ceil(ue.bitrate_bps / capacity_per_prb))
 
 
+def user_throughput_satisfaction(ue, bs_list):
+    """Calcula a satisfacao do UE conectado pelo throughput entregue/demandado.
+
+    Retorna um valor entre 0 e 1. Usuarios desconectados ou sem demanda ativa
+    nao entram na media de satisfacao da rede.
+    """
+    if not ue.connected or ue.serving_bs is None or ue.allocated_prbs <= 0 or ue.bitrate_bps <= 0:
+        return float("nan")
+
+    sinr_db, _ = calculate_sinr_db(ue, bs_list, ue.serving_bs)
+    se = spectral_efficiency_from_sinr(sinr_db)
+    delivered_bps = ue.allocated_prbs * PRB_BANDWIDTH_HZ * se
+    return float(np.clip(delivered_bps / ue.bitrate_bps, 0.0, 1.0))
+
+
+def mean_user_satisfaction(users, bs_list):
+    """Calcula a satisfacao media dos usuarios conectados."""
+    values = [
+        user_throughput_satisfaction(ue, bs_list)
+        for ue in users
+        if ue.connected
+    ]
+    values = [value for value in values if np.isfinite(value)]
+    return float(np.mean(values)) if values else float("nan")
+
+
 # ============================================================
 # CRIAÇÃO E GERENCIAMENTO DE USUÁRIOS
 # ============================================================
@@ -1576,9 +1602,12 @@ def summarize_performance(results):
     if not np.any(mask):
         mask = np.ones_like(results["time"], dtype=bool)
 
+    satisfaction = results["satisfaction"][mask]
+    finite_satisfaction = satisfaction[np.isfinite(satisfaction)]
+
     return {
         "mean_bs_load": float(np.mean(results["avg_load"][mask])),
-        "mean_user_satisfaction": float(np.nanmean(results["satisfaction"][mask])),
+        "mean_user_satisfaction": float(np.mean(finite_satisfaction)) if len(finite_satisfaction) else 0.0,
         "total_blocked_attempts": int(np.sum(results["blocked_attempts"][mask])),
         "total_rlfs": int(np.sum(results["rlfs"][mask])),
         "total_handovers": int(np.sum(results["handovers"][mask])),
@@ -1829,7 +1858,6 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
     handover_events = []
     pingpong_events = []
     rlf_events = []
-    attempted_users = set()
 
     # Contadores acumulados
     total_blocked_attempts = 0
@@ -1842,6 +1870,7 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
     stats_total_blocked = 0
     stats_load_sum = 0.0
     stats_satisfaction_sum = 0.0
+    stats_satisfaction_samples = 0
     stats_samples = 0
 
     # Próxima atualização do RIC
@@ -1890,12 +1919,11 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
             else:
                 # Usuário desconectado: tenta conectar
                 if current_time >= ue.next_attempt_time:
-                    attempted_users.add(int(ue.ue_id))
                     established = try_establish_connection(ue, bs_list, current_time)
 
                     if not established:
                         blocked_connection_events.append({
-                            "time": float(ue.next_attempt_time),
+                            "time": float(current_time),
                             "user": int(ue.ue_id),
                             "x pos": float(ue.x),
                             "y pos": float(ue.y),
@@ -1914,8 +1942,7 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
 
         loads = [bs.load() for bs in bs_list]
         connected_users = sum(1 for ue in users if ue.connected)
-        attempted_count = len(attempted_users)
-        satisfaction = float(connected_users) / attempted_count if attempted_count > 0 else float("nan")
+        satisfaction = mean_user_satisfaction(users, bs_list)
 
         # Registra no histórico
         time_history.append(current_time)
@@ -1937,6 +1964,7 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
             stats_load_sum += float(np.mean(loads))
             if np.isfinite(satisfaction):
                 stats_satisfaction_sum += satisfaction
+                stats_satisfaction_samples += 1
             stats_samples += 1
 
         # Atualiza contadores
@@ -1962,8 +1990,8 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
 
         if step_callback is not None:
             stats_satisfaction = (
-                stats_satisfaction_sum / stats_samples
-                if stats_samples > 0
+                stats_satisfaction_sum / stats_satisfaction_samples
+                if stats_satisfaction_samples > 0
                 else (satisfaction if np.isfinite(satisfaction) else 0.0)
             )
             snapshot = {
