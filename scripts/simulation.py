@@ -34,7 +34,7 @@ from collections import deque, defaultdict
 # - SIM_TIME: Tempo total de simulação em segundos
 # - DT: Passo de tempo (time step) da simulação
 
-np.random.seed(42)  # Semente para reprodutibilidade dos resultados
+np.random.seed(1)  # Semente para reprodutibilidade dos resultados
 
 N_BS = 19  # 19 estações base em layout hexagonal
 USERS_PER_BS = 20  # 20 usuários por BS = 380 usuários total

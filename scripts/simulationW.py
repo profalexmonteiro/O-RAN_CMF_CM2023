@@ -29,7 +29,6 @@ Saídas:
 import math
 import os
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 from dataclasses import dataclass
 import concurrent.futures
@@ -96,14 +95,13 @@ def fspl_db(distance_m: np.ndarray, freq_mhz: float) -> np.ndarray:
 
 
 def deploy_gnbs(cfg: SimConfig) -> np.ndarray:
-    """Posiciona quatro gNBs em uma grade 2x2 dentro da área."""
-    # O layout fixo simplifica a análise e mantém a simulação estável.
-    return np.array([
-        [250.0, 250.0],
-        [750.0, 250.0],
-        [250.0, 750.0],
-        [750.0, 750.0],
-    ], dtype=float)
+    """Posiciona gNBs em uma grade regular dentro da area."""
+    n_gnbs = max(1, int(cfg.n_gnbs))
+    grid_size = math.ceil(math.sqrt(n_gnbs))
+    margin = cfg.area_size_m / (grid_size + 1)
+    axis = np.linspace(margin, cfg.area_size_m - margin, grid_size)
+    positions = [[x, y] for y in axis for x in axis]
+    return np.array(positions[:n_gnbs], dtype=float)
 
 
 def init_ues(cfg: SimConfig, rng: np.random.Generator):
@@ -302,6 +300,8 @@ def run_rep(rep: int, methods, base_seed: int, cfg: SimConfig):
 
 
 def run_experiment(repetitions=500, base_seed=42):
+    import pandas as pd
+
     # Controla a execução de múltiplas repetições e agrega os resultados.
     cfg = SimConfig()
     methods = ["NC", "SBD", "P-ES", "P-MRO", "QACM"]

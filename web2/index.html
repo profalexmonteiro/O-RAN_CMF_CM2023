@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>O-RAN MRO x ES Simulator</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Near-RT RIC</p>
+        <h1>O-RAN MRO x ES Simulator</h1>
+      </div>
+      <div class="status-pill" id="statusPill">Idle</div>
+    </header>
+
+    <main class="shell">
+      <nav class="tabs" aria-label="Abas principais">
+        <button class="tab active" type="button" data-tab="setup">Setup</button>
+        <button class="tab" type="button" data-tab="visualizacao">Visualizacao</button>
+      </nav>
+
+      <section class="tab-panel active" id="setup">
+        <div class="setup-grid">
+          <aside class="run-panel">
+            <div class="section-heading compact-heading">
+              <h2>Execucao</h2>
+              <span class="mode-badge">RAN Lab</span>
+            </div>
+            <label>
+              Repeticoes
+              <input id="repetitions" type="number" min="1" max="500" step="1" value="10" />
+            </label>
+            <label>
+              Seed base
+              <input id="base_seed" type="number" step="1" value="42" />
+            </label>
+            <div class="quick-grid" aria-label="Controles principais da RAN">
+              <label>
+                Quantidade gNBs
+                <input id="quick_gnbs" type="number" min="1" max="64" step="1" value="4" />
+              </label>
+              <label>
+                Quantidade UEs
+                <input id="quick_ues" type="number" min="1" max="5000" step="1" value="100" />
+              </label>
+              <label>
+                Steps/run
+                <input id="quick_steps" type="number" min="1" max="100000" step="1" value="6000" />
+              </label>
+            </div>
+            <div class="method-group" aria-label="Metodos de mitigacao">
+              <span class="control-label">Metodos</span>
+              <label class="method-chip"><input class="method-check" type="checkbox" value="NC" checked />NC</label>
+              <label class="method-chip"><input class="method-check" type="checkbox" value="SBD" checked />SBD</label>
+              <label class="method-chip"><input class="method-check" type="checkbox" value="P-ES" checked />P-ES</label>
+              <label class="method-chip"><input class="method-check" type="checkbox" value="P-MRO" checked />P-MRO</label>
+              <label class="method-chip"><input class="method-check" type="checkbox" value="QACM" checked />QACM</label>
+            </div>
+            <div class="button-row">
+              <button class="primary" id="startBtn" type="button">Iniciar simulacao</button>
+              <button class="secondary" id="resetBtn" type="button">Restaurar padrao</button>
+            </div>
+            <div class="progress">
+              <div class="progress-track"><span id="progressBar"></span></div>
+              <p id="progressText">Aguardando configuracao</p>
+            </div>
+            <div class="scenario-summary" id="scenarioSummary"></div>
+          </aside>
+
+          <section class="parameter-panel">
+            <div class="section-heading">
+              <div>
+                <h2>Parametros do cenario</h2>
+                <p class="panel-subtitle">Radio, mobilidade, energia e QoS</p>
+              </div>
+              <input id="searchInput" type="search" placeholder="Filtrar parametro" />
+            </div>
+            <div class="filter-row" aria-label="Categorias de parametros">
+              <button class="filter-pill active" type="button" data-group="all">Todos</button>
+              <button class="filter-pill" type="button" data-group="network">Rede</button>
+              <button class="filter-pill" type="button" data-group="radio">Radio</button>
+              <button class="filter-pill" type="button" data-group="mobility">Mobilidade</button>
+              <button class="filter-pill" type="button" data-group="energy">Energia</button>
+              <button class="filter-pill" type="button" data-group="qos">QoS</button>
+            </div>
+            <div id="fieldsGrid" class="fields-grid"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="tab-panel" id="visualizacao">
+        <div class="metrics-grid" id="metricsGrid"></div>
+
+        <section class="topology-panel">
+          <div class="section-heading">
+            <div>
+              <h2>Topologia em tempo real</h2>
+              <p class="panel-subtitle">gNBs, UEs e classes de servico da configuracao atual</p>
+            </div>
+            <div class="legend">
+              <strong>Legenda de cores</strong>
+              <span><i class="legend-tower"></i>Antena celular</span>
+              <span><i class="legend-dot embb"></i>UE eMBB</span>
+              <span><i class="legend-dot urllc"></i>UE URLLC</span>
+              <span><i class="legend-dot mmtc"></i>UE mMTC</span>
+            </div>
+          </div>
+          <div class="topology-stats" id="topologyStats">
+            <span>gNBs: -</span>
+            <span>UEs: -</span>
+            <span>Area: -</span>
+            <span>Tempo: -</span>
+          </div>
+          <div class="network-canvas-wrap">
+            <canvas id="networkCanvas" width="1000" height="520"></canvas>
+            <div class="canvas-empty" id="canvasEmpty">Inicie uma simulacao para visualizar antenas e UEs.</div>
+          </div>
+        </section>
+
+        <section class="visual-grid">
+          <div class="chart-panel">
+            <div class="section-heading">
+              <h2>Comparativo por metodo</h2>
+              <select id="metricSelect">
+                <option value="energy_efficiency_gb_per_j">Eficiencia energetica</option>
+                <option value="link_failures">Falhas de link</option>
+                <option value="total_handovers">Handovers totais</option>
+                <option value="pingpong_handovers">Ping-pong</option>
+              </select>
+            </div>
+            <div class="method-legend" id="methodLegend"></div>
+            <div class="chart" id="chart"></div>
+          </div>
+
+          <div class="table-panel">
+            <div class="section-heading">
+              <h2>Resumo estatistico</h2>
+              <button class="secondary compact" id="downloadBtn" type="button">Baixar CSV</button>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Metodo</th>
+                    <th>Energia media</th>
+                    <th>Falhas media</th>
+                    <th>Handovers media</th>
+                    <th>Ping-pong media</th>
+                  </tr>
+                </thead>
+                <tbody id="summaryBody">
+                  <tr><td colspan="5">Execute uma simulacao para visualizar as saidas.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="app.js"></script>
+  </body>
+</html>
