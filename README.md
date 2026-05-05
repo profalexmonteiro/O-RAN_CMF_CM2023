@@ -41,7 +41,7 @@ ComMag 2023
         - antenna height: 1.6 m
         - cable loss: 0 dB
         - MIMO configuration: 2x2
-        - RX sensitivity: -80 dBm
+        - RX sensitivity: -110 dBm
 
     ![Considered user distribution](/figures/users.png)
 

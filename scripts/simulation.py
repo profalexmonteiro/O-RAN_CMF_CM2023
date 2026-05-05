@@ -86,7 +86,7 @@ DEFAULT_HYSTERESIS_DB = 0.0  # Hysteresis padrão: 0 dB
 UE_ANTENNA_GAIN_DB = 0.0  # Ganho da antena do UE em dB
 UE_HEIGHT_M = 1.6  # Altura típica do usuário em metros
 UE_CABLE_LOSS_DB = 0.0  # Perda no cabo do UE (desprezível)
-UE_RX_SENSITIVITY_DBM = -80.0  # Sensibilidade mínima de recepção em dBm
+UE_RX_SENSITIVITY_DBM = -110.0  # Sensibilidade mínima de recepção em dBm
 UE_RX_SENSITIVITY_MARGIN_DB = 0.0  # Tolerância adicional para handover/conexão por desvio de fading
 UE_MIMO_LAYERS = 2  # Configuração MIMO 2x2
 
@@ -1039,7 +1039,7 @@ def create_users(poly):
 # - Implementa Event A3 do 3GPP (melhor célula por offset)
 # - Usa TTT (Time To Trigger) e hysteresis
 
-def best_bs_by_rsrp(ue, bs_list):
+def best_bs_by_rsrp(ue, bs_list, include_shadowing=False):
     """Encontra a melhor BS por RSRP (Reference Signal Received Power).
     
     RSRP = potência de referência recebida + CIO
@@ -1052,8 +1052,9 @@ def best_bs_by_rsrp(ue, bs_list):
     Returns:
         Tupla (índice da melhor BS, array de RSRPs)
     """
+    rx_power_fn = rx_power_dbm if include_shadowing else rx_power_dbm_no_fast_random
     rsrp = np.array([
-        rx_power_dbm_no_fast_random(bs, ue) + bs.cio_db
+        rx_power_fn(bs, ue) + bs.cio_db
         for bs in bs_list
     ])
 
@@ -1181,14 +1182,14 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
     # Verifica sensibilidade usando margem de tolerância para evitar falhas por desvio de fading
     sensitivity_threshold = UE_RX_SENSITIVITY_DBM - UE_RX_SENSITIVITY_MARGIN_DB
     if rx_powers[target_bs_idx] < sensitivity_threshold:
-        return False
+        return None
 
     # Calcula PRBs necessários na nova célula
     required_prbs = required_prbs_for_user(ue, sinr_db)
 
     # Verifica disponibilidade de PRBs
     if target_bs.used_prbs + required_prbs > TOTAL_PRBS_PER_BS:
-        return False
+        return None
 
     # Libera PRBs da célula origem
     source_bs.used_prbs -= ue.allocated_prbs
@@ -1223,9 +1224,10 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
     }
 
     # Detecta ping-pong: retorno à BS anterior em < 10s
+    pingpong_delay = current_time - old_last_ho_time
     if (
-        old_last_ho_time > 0
-        and current_time - old_last_ho_time <= PINGPONG_PERIOD
+        previous_bs_before_ho is not None
+        and 0.0 <= pingpong_delay <= PINGPONG_PERIOD
         and target_bs_idx == previous_bs_before_ho
     ):
         ue.total_pingpongs += 1
@@ -1237,7 +1239,7 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
             "conn_sinr": float(sinr_db),
             "x pos": float(ue.x),
             "y pos": float(ue.y),
-            "ho pp time": float(current_time - old_last_ho_time),
+            "ho pp time": float(pingpong_delay),
         }
 
     return handover_event
@@ -1269,7 +1271,7 @@ def a3_handover_logic(ue, bs_list, current_time, dt):
     current_bs = bs_list[current_idx]
 
     # Encontra melhor BS
-    best_idx, rsrp = best_bs_by_rsrp(ue, bs_list)
+    best_idx, rsrp = best_bs_by_rsrp(ue, bs_list, include_shadowing=True)
 
     # Se já está na melhor célula, reseta temporizadores
     if best_idx == current_idx:
@@ -1903,18 +1905,19 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
                     ue.next_attempt_time = generate_next_attempt_time(current_time)
                     continue
 
-                # Verifica RLF
-                rlf_event = check_rlf(ue, bs_list, current_time)
-                if rlf_event is not None:
-                    rlf_events.append(rlf_event)
-                    continue
-
                 # Executa lógica de handover
                 handover_event = a3_handover_logic(ue, bs_list, current_time, DT)
                 if handover_event is not None:
                     handover_events.append(handover_event)
                     if handover_event["pingpong"] is not None:
                         pingpong_events.append(handover_event["pingpong"])
+                    continue
+
+                # Verifica RLF após a tentativa de handover
+                rlf_event = check_rlf(ue, bs_list, current_time)
+                if rlf_event is not None:
+                    rlf_events.append(rlf_event)
+                    continue
 
             else:
                 # Usuário desconectado: tenta conectar
