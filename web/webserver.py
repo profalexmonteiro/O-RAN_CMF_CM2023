@@ -39,6 +39,7 @@ PARAM_TYPES = {
     "UE_HEIGHT_M": float,
     "UE_CABLE_LOSS_DB": float,
     "UE_RX_SENSITIVITY_DBM": float,
+    "UE_RX_SENSITIVITY_MARGIN_DB": float,
     "UE_MIMO_LAYERS": int,
     "PEDESTRIAN_PROB": float,
     "PEDESTRIAN_SPEED": float,
@@ -155,6 +156,12 @@ def run_simulation_task(params, cmf_mode="no_CM", export_bs_results=True):
 class SimulationHTTPRequestHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
 
     def log_message(self, format, *args):
         print("[web] " + format % args)

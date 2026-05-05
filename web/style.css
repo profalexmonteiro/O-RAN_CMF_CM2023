@@ -245,6 +245,20 @@ button.stop-mode {
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
 }
 
+.metrics {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+    gap: 12px;
+}
+
+.metrics p {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+}
+
 .status-card h3,
 .parameter-card h3 {
     margin: 0;

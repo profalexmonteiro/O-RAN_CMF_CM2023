@@ -29,12 +29,25 @@
                     <p>Ajuste apenas estes campos para rodar um cenário básico. Os demais cartões refinam radio, mobilidade e controle.</p>
                 </div>
                 <label>
+                    Preset de cenário
+                    <select id="scenario_preset" name="scenario_preset">
+                        <option value="default">Padrão</option>
+                        <option value="force_handover">Forçar handover</option>
+                        <option value="high_density">Alta densidade</option>
+                        <option value="low_interference">Baixa interferência</option>
+                    </select>
+                </label>
+                <label>
                     Tempo de simulação (s)
                     <input type="number" name="sim_time" id="sim_time" min="10" step="10" value="1000" />
                 </label>
                 <label>
                     Distância entre antenas (m)
                     <input type="number" name="inter_site_distance" id="inter_site_distance" min="50" step="50" value="600" />
+                </label>
+                <label title="Quantidade de antenas/estações base geradas no grid hexagonal da simulação.">
+                    Quantidade de antenas
+                    <input type="number" name="n_bs" id="n_bs" min="1" max="61" step="1" value="19" />
                 </label>
                 <label>
                     Tipo de simulação
@@ -48,7 +61,11 @@
                     <input type="checkbox" id="export_bs_results" name="export_bs_results" checked />
                     <span>Gerar CSVs por estação base</span>
                 </label>
-                <button type="button" id="setup-visual-shortcut" class="secondary-button">Ir para Visualização</button>
+                <div class="button-row">
+                    <button type="button" id="setup-start-button">Iniciar Simulação</button>
+                    <button type="button" id="setup-visual-shortcut" class="secondary-button">Ir para Visualização</button>
+                </div>
+                <div id="setup-validation" class="validation-card"></div>
             </form>
             <div class="parameter-card">
                 <h3>Parâmetros das Estações Base</h3>
@@ -85,6 +102,12 @@
                         Subcarrier spacing (kHz)
                         <input type="number" id="subcarrier_spacing_khz" step="1" value="15" />
                     </label>
+                </div>
+            </div>
+            <div class="parameter-card">
+                <h3>Mobilidade e Handover</h3>
+                <p class="card-description">Ajuste os parâmetros de handover e sensibilidade do UE de forma centralizada.</p>
+                <div class="parameter-list">
                     <label title="Offset individual da célula usado nas decisões de handover e balanceamento de carga. Valores positivos tornam a célula mais atrativa; valores negativos a tornam menos atrativa.">
                         Cell Individual Offset padrão (dB)
                         <input type="number" id="default_cio_db" step="0.1" value="0" />
@@ -96,6 +119,14 @@
                     <label title="Margem adicional exigida para confirmar que uma célula vizinha está melhor que a célula atual. Ajuda a evitar handovers instáveis e eventos de ping-pong.">
                         Histerese de handover padrão (dB)
                         <input type="number" id="default_hysteresis_db" step="0.1" value="0" />
+                    </label>
+                    <label title="Sensibilidade mínima de recepção do UE. Sinais abaixo desse limite não são aceitos para conexão ou handover.">
+                        Sensibilidade RX (dBm)
+                        <input type="number" id="ue_rx_sensitivity_dbm" step="1" value="-80" />
+                    </label>
+                    <label title="Margem de tolerância adicional aplicada ao check de sensibilidade no handover e na associação. Valores positivos permitem aceitar sinais abaixo do limite nominal.">
+                        Margem de sensibilidade RX (dB)
+                        <input type="number" id="ue_rx_sensitivity_margin_db" step="0.1" value="0" />
                     </label>
                 </div>
             </div>
@@ -145,10 +176,6 @@
                     <label title="Número de camadas MIMO representando a configuração 2x2. No modelo atual, esse valor é armazenado como parâmetro do cenário.">
                         MIMO layers
                         <input type="number" id="ue_mimo_layers" min="1" step="1" value="2" />
-                    </label>
-                    <label title="Sensibilidade mínima de recepção do UE. Sinais abaixo desse limite não são aceitos para conexão ou handover.">
-                        Sensibilidade RX (dBm)
-                        <input type="number" id="ue_rx_sensitivity_dbm" step="1" value="-80" />
                     </label>
                 </div>
             </div>
@@ -269,9 +296,14 @@
                 </div>
                 <div class="metrics">
                     <p><strong>Conectados:</strong> <span id="connected-count">0</span></p>
-                    <p><strong>Load médio:</strong> <span id="avg-load">0.0</span></p>
-                    <p><strong>Load máximo:</strong> <span id="max-load">0.0</span></p>
+                    <p><strong>Satisfação:</strong> <span id="user-satisfaction">0%</span></p>
                     <p><strong>Handovers:</strong> <span id="handovers">0</span></p>
+                    <p><strong>Ping-pong:</strong> <span id="pingpongs">0</span></p>
+                    <p><strong>RLFs:</strong> <span id="rlfs">0</span></p>
+                    <p><strong>Call blockages:</strong> <span id="call-blockages">0</span></p>
+                    <p><strong>Load médio:</strong> <span id="avg-load">0%</span></p>
+                    <p><strong>Load máximo:</strong> <span id="max-load">0%</span></p>
+                    <p><strong>Antenas:</strong> <span id="antenna-count">0</span></p>
                 </div>
             </div>
             <div class="status-card visual-status">
@@ -279,6 +311,12 @@
                 <p id="status-message">Aguardando início.</p>
                 <p><strong>Última atualização:</strong> <span id="last-update">-</span></p>
                 <p><strong>Progresso:</strong> <span id="progress">0%</span></p>
+                <p><strong>Cenário ativo:</strong> <span id="scenario-summary">Nenhum</span></p>
+                <p><strong>Preset:</strong> <span id="scenario-preset-summary">Padrão</span></p>
+            </div>
+            <div class="status-card visual-recommendation">
+                <h3>Recomendações rápidas</h3>
+                <p id="recommendation-text">Use presets para configurar cenários comuns e inicie a simulação direto do setup. Ajuste TTT, histerese e sensibilidade RX para testar transferência de célula e estabilidade.</p>
             </div>
             <div class="canvas-container">
                 <canvas id="simulation-canvas" width="900" height="620"></canvas>
@@ -292,6 +330,6 @@
         </section>
     </main>
 
-    <script src="app.js"></script>
+    <script src="app.js?v=antenna-grid-4"></script>
 </body>
 </html>

@@ -86,6 +86,7 @@ UE_ANTENNA_GAIN_DB = 0.0  # Ganho da antena do UE em dB
 UE_HEIGHT_M = 1.6  # Altura típica do usuário em metros
 UE_CABLE_LOSS_DB = 0.0  # Perda no cabo do UE (desprezível)
 UE_RX_SENSITIVITY_DBM = -80.0  # Sensibilidade mínima de recepção em dBm
+UE_RX_SENSITIVITY_MARGIN_DB = 0.0  # Tolerância adicional para handover/conexão por desvio de fading
 UE_MIMO_LAYERS = 2  # Configuração MIMO 2x2
 
 # Velocidades de movimento:
@@ -420,8 +421,8 @@ class User:
 # - Gera ponto aleatório dentro do polígono
 # - Utilizado para posicionar usuários iniciais
 
-def generate_19_bs_hex_grid(isd=None, center_x=1000, center_y=1000):
-    """Gera 19 estações base em layout hexagonal (grid de anéis).
+def generate_19_bs_hex_grid(isd=None, center_x=1000, center_y=1000, n_bs=None):
+    """Gera estações base em layout hexagonal (grid de anéis).
     
     Args:
         isd: Inter-Site Distance (distância entre sites) em metros
@@ -433,10 +434,15 @@ def generate_19_bs_hex_grid(isd=None, center_x=1000, center_y=1000):
     """
     if isd is None:
         isd = INTER_SITE_DISTANCE
+    if n_bs is None:
+        n_bs = N_BS
+    n_bs = max(1, int(n_bs))
 
     coords = []
 
-    rings = 2  # 2 anéis ao redor do centro = 19 células
+    rings = 0
+    while 1 + 3 * rings * (rings + 1) < n_bs:
+        rings += 1
     for q in range(-rings, rings + 1):
         for r in range(-rings, rings + 1):
             s = -q - r  # Coordenada axial s
@@ -445,6 +451,9 @@ def generate_19_bs_hex_grid(isd=None, center_x=1000, center_y=1000):
                 x = center_x + isd * np.sqrt(3) * (q + r / 2)
                 y = center_y + isd * 1.5 * r
                 coords.append((x, y))
+
+    if len(coords) > n_bs:
+        coords = sorted(coords, key=lambda p: ((p[0] - center_x) ** 2 + (p[1] - center_y) ** 2, p[1], p[0]))[:n_bs]
 
     # Ordena por Y depois por X para visualização
     coords = sorted(coords, key=lambda p: (p[1], p[0]))
@@ -1030,8 +1039,9 @@ def try_establish_connection(ue, bs_list, current_time):
         # Calcula SINR e potências
         sinr_db, rx_powers = calculate_sinr_db(ue, bs_list, bs_idx)
 
-        # Verifica sensibilidade do UE
-        if rx_powers[bs_idx] < UE_RX_SENSITIVITY_DBM:
+        # Verifica sensibilidade do UE com margem de tolerância para handover/conexão
+        sensitivity_threshold = UE_RX_SENSITIVITY_DBM - UE_RX_SENSITIVITY_MARGIN_DB
+        if rx_powers[bs_idx] < sensitivity_threshold:
             continue
 
         # Calcula PRBs necessários
@@ -1077,8 +1087,9 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
     # Calcula SINR na nova célula
     sinr_db, rx_powers = calculate_sinr_db(ue, bs_list, target_bs_idx)
 
-    # Verifica sensibilidade
-    if rx_powers[target_bs_idx] < UE_RX_SENSITIVITY_DBM:
+    # Verifica sensibilidade usando margem de tolerância para evitar falhas por desvio de fading
+    sensitivity_threshold = UE_RX_SENSITIVITY_DBM - UE_RX_SENSITIVITY_MARGIN_DB
+    if rx_powers[target_bs_idx] < sensitivity_threshold:
         return False
 
     # Calcula PRBs necessários na nova célula
@@ -1095,9 +1106,10 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
     # Aloca PRBs na célula destino
     target_bs.used_prbs += required_prbs
 
-    # Atualiza histórico
-    ue.last_bs_before_ho = source_bs_idx
+    # Mantém histórico do último handover antes de atualizar a conexão
+    previous_bs_before_ho = ue.last_bs_before_ho
     old_last_ho_time = ue.last_handover_time
+    ue.last_bs_before_ho = source_bs_idx
 
     # Atualiza estado do UE
     ue.serving_bs = target_bs_idx
@@ -1123,7 +1135,7 @@ def perform_handover(ue, bs_list, target_bs_idx, current_time):
     if (
         old_last_ho_time > 0
         and current_time - old_last_ho_time <= PINGPONG_PERIOD
-        and target_bs_idx == ue.last_bs_before_ho
+        and target_bs_idx == previous_bs_before_ho
     ):
         ue.total_pingpongs += 1
         source_bs.pingpong_events.append(current_time)
@@ -1488,23 +1500,34 @@ def _load_balance_ratio(loads):
     return float((np.sum(loads) ** 2) / (len(loads) * squared_sum))
 
 
+def _csv_timestamp():
+    now = datetime.now()
+    weekdays = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    return f"{weekdays[now.weekday()]}_{months[now.month - 1]}_{now.day}_{now.hour:02d}-{now.minute:02d}-{now.second:02d}_{now.year}"
+
+
+def _csv_suffix(cmf_mode):
+    suffix_by_mode = {
+        "no_CM": "MROMLB",
+        "prio_MRO": "prioMRO",
+        "prio_MLB": "prioMLB",
+    }
+    bandwidth_mhz = int(BANDWIDTH_HZ / 1e6)
+    return f"{_csv_timestamp()}_{bandwidth_mhz}_{suffix_by_mode.get(cmf_mode, cmf_mode)}"
+
+
 def _write_bs_result_csvs(bs_history, cmf_mode):
     """Escreve um CSV por BS em simulation_results/<modo>."""
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "simulation_results"))
     mode_dir = os.path.join(base_dir, cmf_mode)
     os.makedirs(mode_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix_by_mode = {
-        "no_CM": "MROMLB",
-        "prio_MRO": "prioMRO",
-        "prio_MLB": "prioMLB",
-    }
-    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
+    timestamp = _csv_suffix(cmf_mode)
     written_files = []
 
     for bs_id in sorted(bs_history):
-        path = os.path.join(mode_dir, f"bs-{bs_id}_{timestamp}_{suffix}.csv")
+        path = os.path.join(mode_dir, f"bs-{bs_id}_{timestamp}.csv")
         with open(path, "w", newline="", encoding="utf-8") as csvfile:
             writer = csv.writer(csvfile)
             writer.writerow(["time", "current bs", "availability", "cio", "hyst", "ttt"])
@@ -1528,14 +1551,8 @@ def _write_load_balance_csv(load_balance_history, cmf_mode):
     mode_dir = os.path.join(base_dir, cmf_mode)
     os.makedirs(mode_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix_by_mode = {
-        "no_CM": "MROMLB",
-        "prio_MRO": "prioMRO",
-        "prio_MLB": "prioMLB",
-    }
-    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
-    path = os.path.join(mode_dir, f"lb_{timestamp}_{suffix}.csv")
+    timestamp = _csv_suffix(cmf_mode)
+    path = os.path.join(mode_dir, f"lb_{timestamp}.csv")
 
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -1555,14 +1572,8 @@ def _write_availability_csv(availability_history, cmf_mode):
     mode_dir = os.path.join(base_dir, cmf_mode)
     os.makedirs(mode_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix_by_mode = {
-        "no_CM": "MROMLB",
-        "prio_MRO": "prioMRO",
-        "prio_MLB": "prioMLB",
-    }
-    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
-    path = os.path.join(mode_dir, f"avail_{timestamp}_{suffix}.csv")
+    timestamp = _csv_suffix(cmf_mode)
+    path = os.path.join(mode_dir, f"avail_{timestamp}.csv")
 
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -1582,14 +1593,8 @@ def _write_satisfaction_csv(satisfaction_history, cmf_mode):
     mode_dir = os.path.join(base_dir, cmf_mode)
     os.makedirs(mode_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix_by_mode = {
-        "no_CM": "MROMLB",
-        "prio_MRO": "prioMRO",
-        "prio_MLB": "prioMLB",
-    }
-    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
-    path = os.path.join(mode_dir, f"satis_{timestamp}_{suffix}.csv")
+    timestamp = _csv_suffix(cmf_mode)
+    path = os.path.join(mode_dir, f"satis_{timestamp}.csv")
 
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -1609,14 +1614,8 @@ def _write_connection_block_csv(blocked_connection_events, cmf_mode):
     mode_dir = os.path.join(base_dir, cmf_mode)
     os.makedirs(mode_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix_by_mode = {
-        "no_CM": "MROMLB",
-        "prio_MRO": "prioMRO",
-        "prio_MLB": "prioMLB",
-    }
-    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
-    path = os.path.join(mode_dir, f"cb_{timestamp}_{suffix}.csv")
+    timestamp = _csv_suffix(cmf_mode)
+    path = os.path.join(mode_dir, f"cb_{timestamp}.csv")
 
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -1638,14 +1637,8 @@ def _write_handover_csv(handover_events, cmf_mode):
     mode_dir = os.path.join(base_dir, cmf_mode)
     os.makedirs(mode_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix_by_mode = {
-        "no_CM": "MROMLB",
-        "prio_MRO": "prioMRO",
-        "prio_MLB": "prioMLB",
-    }
-    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
-    path = os.path.join(mode_dir, f"ho_{timestamp}_{suffix}.csv")
+    timestamp = _csv_suffix(cmf_mode)
+    path = os.path.join(mode_dir, f"ho_{timestamp}.csv")
 
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -1670,14 +1663,8 @@ def _write_pingpong_csv(pingpong_events, cmf_mode):
     mode_dir = os.path.join(base_dir, cmf_mode)
     os.makedirs(mode_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix_by_mode = {
-        "no_CM": "MROMLB",
-        "prio_MRO": "prioMRO",
-        "prio_MLB": "prioMLB",
-    }
-    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
-    path = os.path.join(mode_dir, f"pp_{timestamp}_{suffix}.csv")
+    timestamp = _csv_suffix(cmf_mode)
+    path = os.path.join(mode_dir, f"pp_{timestamp}.csv")
 
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -1702,14 +1689,8 @@ def _write_rlf_csv(rlf_events, cmf_mode):
     mode_dir = os.path.join(base_dir, cmf_mode)
     os.makedirs(mode_dir, exist_ok=True)
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    suffix_by_mode = {
-        "no_CM": "MROMLB",
-        "prio_MRO": "prioMRO",
-        "prio_MLB": "prioMLB",
-    }
-    suffix = suffix_by_mode.get(cmf_mode, cmf_mode)
-    path = os.path.join(mode_dir, f"rlf_{timestamp}_{suffix}.csv")
+    timestamp = _csv_suffix(cmf_mode)
+    path = os.path.join(mode_dir, f"rlf_{timestamp}.csv")
 
     with open(path, "w", newline="", encoding="utf-8") as csvfile:
         writer = csv.writer(csvfile)
@@ -1740,7 +1721,7 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
         Tupla (bs_list, users, poly, results)
     """
     # Inicializa rede
-    bs_list = generate_19_bs_hex_grid()
+    bs_list = generate_19_bs_hex_grid(n_bs=N_BS)
     poly = simulation_polygon()
     users = create_users(poly)
 
@@ -1871,12 +1852,15 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
             next_bs_log_time += 1.0
 
         if step_callback is not None:
+            attempted_count = len(attempted_users)
+            satisfaction = float(connected_users) / attempted_count if attempted_count > 0 else 0.0
             snapshot = {
                 "step": step + 1,
                 "steps": STEPS,
                 "time": current_time,
                 "progress": round((step + 1) * 100.0 / max(STEPS, 1), 1),
                 "connected_users": connected_users,
+                "satisfaction": satisfaction,
                 "avg_load": float(np.mean(loads)),
                 "max_load": float(np.max(loads)),
                 "handovers": total_ho,

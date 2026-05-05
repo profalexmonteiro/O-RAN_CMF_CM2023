@@ -3,7 +3,10 @@ const startUrl = "/api/start";
 const stopUrl = "/api/stop";
 let pollingTimer = null;
 let simulationRunning = false;
+let simulationRequestPending = false;
+let setupPreviewActive = false;
 let currentLanguage = "pt";
+const ANTENNA_DISPLAY_ORIGIN = 1500;
 
 const i18n = {
     pt: {
@@ -38,12 +41,18 @@ const i18n = {
             "#setup-panel .parameter-card:nth-of-type(5) .card-description": "O modelo UMa (Urban Macro) do 3GPP TR 38.901 é utilizado para calcular pathloss e margens adicionais de propagação.",
             "#setup-panel .parameter-card:nth-of-type(6) h3": "RIC Configuration",
             "#setup-panel .parameter-card:nth-of-type(6) .card-description": "Todas as estações base são gerenciadas por um único near-RT RIC. Os xApps MRO e MLB são executados simultaneamente para ajustar handover e balanceamento de carga.",
+            "#setup-start-button": "Iniciar Simulação",
             "#visual-panel .visual-header h2": "Visualização em Tempo Real",
             "#visual-panel .visual-header p": "Monitore os movimentos das antenas e dos UEs.",
             "#visual-panel .metrics p:nth-child(1) strong": "Conectados:",
-            "#visual-panel .metrics p:nth-child(2) strong": "Load médio:",
-            "#visual-panel .metrics p:nth-child(3) strong": "Load máximo:",
-            "#visual-panel .metrics p:nth-child(4) strong": "Handovers:",
+            "#visual-panel .metrics p:nth-child(2) strong": "Satisfação:",
+            "#visual-panel .metrics p:nth-child(3) strong": "Handovers:",
+            "#visual-panel .metrics p:nth-child(4) strong": "Ping-pong:",
+            "#visual-panel .metrics p:nth-child(5) strong": "RLFs:",
+            "#visual-panel .metrics p:nth-child(6) strong": "Call blockages:",
+            "#visual-panel .metrics p:nth-child(7) strong": "Load médio:",
+            "#visual-panel .metrics p:nth-child(8) strong": "Load máximo:",
+            "#visual-panel .metrics p:nth-child(9) strong": "Antenas:",
             ".visual-status h3": "Status",
             ".visual-status p:nth-child(3) strong": "Última atualização:",
             ".visual-status p:nth-child(4) strong": "Progresso:",
@@ -53,8 +62,10 @@ const i18n = {
             ".legend span:nth-child(4)": "Antena (BS)",
         },
         labels: {
+            scenario_preset: "Preset de cenário",
             sim_time: "Tempo de simulação (s)",
             inter_site_distance: "Distância entre antenas (m)",
+            n_bs: "Quantidade de antenas",
             cmf_mode: "Tipo de simulação",
             export_bs_results: "Gerar CSVs por estação base",
             bs_antenna_gain_db: "Ganho da antena (dB)",
@@ -68,6 +79,8 @@ const i18n = {
             default_cio_db: "Cell Individual Offset padrão (dB)",
             default_ttt_s: "Handover Time-To-Trigger padrão (s)",
             default_hysteresis_db: "Histerese de handover padrão (dB)",
+            ue_rx_sensitivity_dbm: "Sensibilidade RX (dBm)",
+            ue_rx_sensitivity_margin_db: "Margem de sensibilidade RX (dB)",
             n_users: "Número de UEs",
             users_per_bs: "Usuários por estação base",
             dt: "Atualização de posição (s)",
@@ -79,7 +92,6 @@ const i18n = {
             ue_height_m: "Altura da antena UE (m)",
             ue_cable_loss_db: "Perda no cabo UE (dB)",
             ue_mimo_layers: "MIMO layers",
-            ue_rx_sensitivity_dbm: "Sensibilidade RX (dBm)",
             low_bitrate_kbps: "Low bitrate (kbps)",
             low_profile_prob_pct: "Low profile (%)",
             medium_bitrate_kbps: "Medium bitrate (kbps)",
@@ -102,6 +114,7 @@ const i18n = {
         tooltips: {
             sim_time: "Tempo total que a simulação executa, em segundos.",
             inter_site_distance: "Distância entre estações base no grid hexagonal. Esse valor altera o espaçamento visual e físico entre as antenas.",
+            n_bs: "Quantidade de antenas/estações base geradas no grid hexagonal da simulação.",
             cmf_mode: "Modo do Conflict Mitigation Framework usado para resolver prioridades entre otimização de mobilidade e balanceamento de carga.",
             export_bs_results: "Quando habilitado, a simulação gera um arquivo CSV por estação base em simulation_results/<tipo_de_simulacao>.",
             bs_antenna_gain_db: "Ganho aplicado pela antena da estação base ao sinal transmitido. Valores maiores aumentam a potência efetiva irradiada e podem melhorar o RSRP recebido pelos UEs.",
@@ -126,7 +139,9 @@ const i18n = {
             ue_height_m: "Altura média do equipamento de usuário em relação ao solo, usada no modelo de propagação.",
             ue_cable_loss_db: "Perda de cabo do equipamento de usuário. Em dispositivos móveis, normalmente é considerada desprezível.",
             ue_mimo_layers: "Número de camadas MIMO representando a configuração 2x2. No modelo atual, esse valor é armazenado como parâmetro do cenário.",
+            scenario_preset: "Escolha um preset rápido para testar cenários comuns sem ajustar todos os parâmetros manualmente.",
             ue_rx_sensitivity_dbm: "Sensibilidade mínima de recepção do UE. Sinais abaixo desse limite não são aceitos para conexão ou handover.",
+            ue_rx_sensitivity_margin_db: "Margem de tolerância aplicada ao check de sensibilidade. Use valores positivos para aceitar sinais mais fracos durante o handover.",
             low_bitrate_kbps: "Taxa de dados exigida pelos usuários do perfil low bitrate. Esse valor representa o throughput mínimo necessário para satisfazer o serviço do usuário. Cor no gráfico: verde.",
             low_profile_prob_pct: "Probabilidade de um UE receber aleatoriamente o perfil low bitrate ao ser criado. Valor padrão: 60%.",
             medium_bitrate_kbps: "Taxa de dados exigida pelos usuários do perfil medium bitrate. Esse valor representa o throughput mínimo necessário para satisfazer o serviço do usuário. Cor no gráfico: amarelo.",
@@ -183,13 +198,19 @@ const i18n = {
             "#setup-panel .parameter-card:nth-of-type(5) h3": "Propagation Model",
             "#setup-panel .parameter-card:nth-of-type(5) .card-description": "The 3GPP TR 38.901 UMa (Urban Macro) model is used to calculate pathloss and additional propagation margins.",
             "#setup-panel .parameter-card:nth-of-type(6) h3": "RIC Configuration",
+            "#setup-start-button": "Start Simulation",
             "#setup-panel .parameter-card:nth-of-type(6) .card-description": "All base stations are managed by a single near-RT RIC. The MRO and MLB xApps run simultaneously to adjust handover and load balancing.",
             "#visual-panel .visual-header h2": "Real-Time Visualization",
             "#visual-panel .visual-header p": "Monitor antenna and UE movement.",
             "#visual-panel .metrics p:nth-child(1) strong": "Connected:",
-            "#visual-panel .metrics p:nth-child(2) strong": "Average load:",
-            "#visual-panel .metrics p:nth-child(3) strong": "Max load:",
-            "#visual-panel .metrics p:nth-child(4) strong": "Handovers:",
+            "#visual-panel .metrics p:nth-child(2) strong": "Satisfaction:",
+            "#visual-panel .metrics p:nth-child(3) strong": "Handovers:",
+            "#visual-panel .metrics p:nth-child(4) strong": "Ping-pong:",
+            "#visual-panel .metrics p:nth-child(5) strong": "RLFs:",
+            "#visual-panel .metrics p:nth-child(6) strong": "Call blockages:",
+            "#visual-panel .metrics p:nth-child(7) strong": "Average load:",
+            "#visual-panel .metrics p:nth-child(8) strong": "Max load:",
+            "#visual-panel .metrics p:nth-child(9) strong": "Antennas:",
             ".visual-status h3": "Status",
             ".visual-status p:nth-child(3) strong": "Last update:",
             ".visual-status p:nth-child(4) strong": "Progress:",
@@ -199,8 +220,10 @@ const i18n = {
             ".legend span:nth-child(4)": "Antenna (BS)",
         },
         labels: {
+            scenario_preset: "Scenario preset",
             sim_time: "Simulation time (s)",
             inter_site_distance: "Distance between antennas (m)",
+            n_bs: "Number of antennas",
             cmf_mode: "Simulation type",
             export_bs_results: "Generate CSVs per base station",
             bs_antenna_gain_db: "Antenna gain (dB)",
@@ -214,6 +237,8 @@ const i18n = {
             default_cio_db: "Default Cell Individual Offset (dB)",
             default_ttt_s: "Default handover Time-To-Trigger (s)",
             default_hysteresis_db: "Default handover hysteresis (dB)",
+            ue_rx_sensitivity_dbm: "RX sensitivity (dBm)",
+            ue_rx_sensitivity_margin_db: "RX sensitivity margin (dB)",
             n_users: "Number of UEs",
             users_per_bs: "Users per base station",
             dt: "Position update interval (s)",
@@ -248,6 +273,7 @@ const i18n = {
         tooltips: {
             sim_time: "Total time the simulation runs, in seconds.",
             inter_site_distance: "Distance between base stations in the hexagonal grid. This value changes the visual and physical spacing between antennas.",
+            n_bs: "Number of antennas/base stations generated in the simulation hexagonal grid.",
             cmf_mode: "Conflict Mitigation Framework mode used to prioritize mobility optimization or load balancing.",
             export_bs_results: "When enabled, the simulation generates one CSV file per base station under simulation_results/<simulation_type>.",
             bs_antenna_gain_db: "Gain applied by the base-station antenna to the transmitted signal. Higher values increase effective radiated power and may improve UE RSRP.",
@@ -272,7 +298,9 @@ const i18n = {
             ue_height_m: "Average user-equipment antenna height above ground, used in the propagation model.",
             ue_cable_loss_db: "Cable loss for the user equipment. In mobile devices, it is usually considered negligible.",
             ue_mimo_layers: "Number of MIMO layers representing the 2x2 configuration. In the current model, this value is stored as a scenario parameter.",
+            scenario_preset: "Choose a scenario preset to quickly test common configurations without tuning all parameters manually.",
             ue_rx_sensitivity_dbm: "Minimum UE receiver sensitivity. Signals below this threshold are not accepted for connection or handover.",
+            ue_rx_sensitivity_margin_db: "Tolerance margin for the receiver sensitivity check. Use positive values to accept weaker signals during handover.",
             low_bitrate_kbps: "Demanded data rate for low-bitrate users. This is the minimum throughput needed to satisfy the user service. Graph color: green.",
             low_profile_prob_pct: "Probability that a UE is randomly assigned the low-bitrate profile when created. Default value: 60%.",
             medium_bitrate_kbps: "Demanded data rate for medium-bitrate users. This is the minimum throughput needed to satisfy the user service. Graph color: yellow.",
@@ -297,6 +325,122 @@ const i18n = {
             prio_MRO: "MRO priority",
             prio_MLB: "MLB priority",
         },
+    },
+};
+
+const scenarioPresetLabels = {
+    pt: {
+        default: "Padrão",
+        force_handover: "Forçar handover",
+        high_density: "Alta densidade",
+        low_interference: "Baixa interferência",
+    },
+    en: {
+        default: "Default",
+        force_handover: "Force handover",
+        high_density: "High density",
+        low_interference: "Low interference",
+    },
+};
+
+const scenarioPresets = {
+    default: {
+        sim_time: 1000,
+        inter_site_distance: 600,
+        n_bs: 19,
+        cmf_mode: "no_CM",
+        export_bs_results: true,
+        bs_antenna_gain_db: 2,
+        bs_height_m: 10,
+        bs_cable_loss_db: 2,
+        bs_tx_power_dbm: 28,
+        center_freq_mhz: 2100,
+        bandwidth_mhz: 20,
+        subcarrier_count: 12,
+        subcarrier_spacing_khz: 15,
+        default_cio_db: 0,
+        default_ttt_s: 0.064,
+        default_hysteresis_db: 0,
+        ue_rx_sensitivity_dbm: -80,
+        ue_rx_sensitivity_margin_db: 0,
+        n_users: 380,
+        users_per_bs: 20,
+        dt: 0.05,
+        pedestrian_prob_pct: 80,
+        pedestrian_speed: 5,
+        vehicle_speed: 25,
+        direction_change_prob_pct: 0.06,
+        ue_antenna_gain_db: 0,
+        ue_height_m: 1.6,
+        ue_cable_loss_db: 0,
+        ue_mimo_layers: 2,
+        low_bitrate_kbps: 96,
+        low_profile_prob_pct: 60,
+        medium_bitrate_kbps: 5000,
+        medium_profile_prob_pct: 30,
+        high_bitrate_kbps: 24000,
+        high_profile_prob_pct: 10,
+        connection_attempt_mean: 20,
+        connection_attempt_std: 3,
+        connection_duration_mean: 60,
+        connection_duration_std: 15,
+        body_loss_db: 1,
+        slow_fading_margin_db: 4,
+        foliage_loss_db: 4,
+        interference_margin_db: 2,
+        rain_margin_db: 0,
+        ric_control_period: 10,
+        mro_window: 240,
+        pingpong_period: 10,
+    },
+    force_handover: {
+        sim_time: 600,
+        inter_site_distance: 450,
+        cmf_mode: "prio_MRO",
+        default_cio_db: 1,
+        default_ttt_s: 0.016,
+        default_hysteresis_db: 0,
+        ue_rx_sensitivity_dbm: -92,
+        ue_rx_sensitivity_margin_db: 4,
+        pedestrian_prob_pct: 35,
+        pedestrian_speed: 3,
+        vehicle_speed: 35,
+        direction_change_prob_pct: 0.12,
+        connection_attempt_mean: 12,
+        connection_attempt_std: 2,
+        pingpong_period: 12,
+    },
+    high_density: {
+        sim_time: 800,
+        inter_site_distance: 500,
+        cmf_mode: "prio_MLB",
+        n_users: 760,
+        users_per_bs: 40,
+        connection_attempt_mean: 8,
+        connection_attempt_std: 2,
+        connection_duration_mean: 90,
+        connection_duration_std: 20,
+        medium_profile_prob_pct: 45,
+        high_profile_prob_pct: 20,
+        low_profile_prob_pct: 35,
+        interference_margin_db: 4,
+        ric_control_period: 5,
+    },
+    low_interference: {
+        sim_time: 1000,
+        inter_site_distance: 800,
+        cmf_mode: "no_CM",
+        n_users: 285,
+        users_per_bs: 15,
+        bs_tx_power_dbm: 26,
+        default_ttt_s: 0.128,
+        default_hysteresis_db: 1,
+        pedestrian_prob_pct: 90,
+        vehicle_speed: 18,
+        interference_margin_db: 0.5,
+        foliage_loss_db: 2,
+        slow_fading_margin_db: 2,
+        rain_margin_db: 0,
     },
 };
 
@@ -361,7 +505,15 @@ function translateStatusMessage(message) {
 
 function updateStartButtonText() {
     const lang = i18n[currentLanguage];
-    $("start-button").textContent = simulationRunning ? lang.stopButton : lang.startButton;
+    ["start-button", "setup-start-button"].forEach((id) => {
+        const button = $(id);
+        if (!button) return;
+
+        button.textContent = simulationRunning ? lang.stopButton : lang.startButton;
+        button.classList.toggle("stop-mode", simulationRunning);
+        button.disabled = simulationRequestPending;
+        button.setAttribute("aria-busy", simulationRequestPending.toString());
+    });
 }
 
 function updateCardToggleText(card) {
@@ -418,8 +570,13 @@ function applyLanguage(language) {
         const option = document.querySelector(`#cmf_mode option[value="${value}"]`);
         if (option) option.textContent = text;
     });
+    Object.entries(scenarioPresetLabels[currentLanguage]).forEach(([value, text]) => {
+        const option = document.querySelector(`#scenario_preset option[value="${value}"]`);
+        if (option) option.textContent = text;
+    });
 
     updateStartButtonText();
+    updateScenarioSummary();
     document.querySelectorAll("#setup-panel .parameter-card").forEach(updateCardToggleText);
 }
 
@@ -441,6 +598,53 @@ function formatTimestamp(ts) {
 function numberValue(id, fallback) {
     const value = parseFloat($(id).value);
     return Number.isFinite(value) ? value : fallback;
+}
+
+function setSetupFieldValue(id, value) {
+    const field = $(id);
+    if (!field) return;
+
+    if (field.type === "checkbox") {
+        field.checked = Boolean(value);
+        return;
+    }
+
+    field.value = value;
+}
+
+function activeScenarioPresetName() {
+    const preset = $("scenario_preset")?.value || "default";
+    return scenarioPresetLabels[currentLanguage][preset] || preset;
+}
+
+function updateScenarioSummary() {
+    const scenarioSummary = $("scenario-summary");
+    const presetSummary = $("scenario-preset-summary");
+    if (scenarioSummary) {
+        const simTime = numberValue("sim_time", 1000);
+        const users = parseInt($("n_users").value, 10) || 380;
+        const antennas = parseInt($("n_bs").value, 10) || 19;
+        const distance = numberValue("inter_site_distance", 600);
+        scenarioSummary.textContent = `${antennas} BS, ${users} UEs, ${distance} m, ${simTime} s`;
+    }
+    if (presetSummary) {
+        presetSummary.textContent = activeScenarioPresetName();
+    }
+
+    if (!simulationRunning && !simulationRequestPending) {
+        drawConfiguredTopologyPreview();
+    }
+}
+
+function applyScenarioPreset() {
+    const selectedPreset = $("scenario_preset").value || "default";
+    const preset = {
+        ...scenarioPresets.default,
+        ...(scenarioPresets[selectedPreset] || {}),
+    };
+
+    Object.entries(preset).forEach(([id, value]) => setSetupFieldValue(id, value));
+    updateScenarioSummary();
 }
 
 function userProfilePayload() {
@@ -484,25 +688,45 @@ async function fetchState() {
 function updateStatus(state) {
     $("status-message").textContent = translateStatusMessage(state.message);
     $("last-update").textContent = formatTimestamp(state.last_update);
-    if (state.snapshot) {
+    const serverRunning = !!state.running || ["Queued", "Starting", "Running", "Stopping"].includes(state.message);
+    const shouldKeepSetupPreview = setupPreviewActive && !serverRunning;
+
+    if (state.snapshot && !shouldKeepSetupPreview) {
         $("progress").textContent = `${state.snapshot.progress || 0}%`;
         $("connected-count").textContent = state.snapshot.connected_users;
-        $("avg-load").textContent = state.snapshot.avg_load.toFixed(2);
-        $("max-load").textContent = state.snapshot.max_load.toFixed(2);
+        const satisfactionValue = Number.isFinite(state.snapshot.satisfaction)
+            ? state.snapshot.satisfaction
+            : state.snapshot.connected_users > 0 || state.snapshot.total_blocked_attempts > 0
+            ? state.snapshot.connected_users / (state.snapshot.connected_users + state.snapshot.total_blocked_attempts)
+            : 0;
+        $("user-satisfaction").textContent = `${(satisfactionValue * 100).toFixed(1)}%`;
         $("handovers").textContent = state.snapshot.handovers;
+        $("pingpongs").textContent = state.snapshot.pingpongs;
+        $("rlfs").textContent = state.snapshot.rlfs;
+        $("call-blockages").textContent = state.snapshot.total_blocked_attempts;
+        $("avg-load").textContent = `${(state.snapshot.avg_load * 100).toFixed(1)}%`;
+        $("max-load").textContent = `${(state.snapshot.max_load * 100).toFixed(1)}%`;
+        $("antenna-count").textContent = state.snapshot.bs?.length || 0;
         drawScene(state.snapshot);
     }
 
-    const running = !!state.running;
+    const running = serverRunning;
     simulationRunning = running;
+    simulationRequestPending = false;
     updateStartButtonText();
-    $("start-button").classList.toggle("stop-mode", running);
 }
 
 async function startSimulation() {
+    if (simulationRequestPending) return;
+
+    setupPreviewActive = false;
+    simulationRequestPending = true;
+    updateStartButtonText();
+
     const simTime = numberValue("sim_time", 1000);
     const dt = numberValue("dt", 0.05);
     const nUsers = parseInt($("n_users").value, 10) || 380;
+    const nBs = parseInt($("n_bs").value, 10) || 19;
     const interSiteDistance = numberValue("inter_site_distance", 600);
     const cmfMode = $("cmf_mode").value || "no_CM";
     const exportBsResults = $("export_bs_results").checked;
@@ -514,6 +738,7 @@ async function startSimulation() {
             body: JSON.stringify({
                 SIM_TIME: simTime,
                 DT: dt,
+                N_BS: nBs,
                 N_USERS: nUsers,
                 USERS_PER_BS: parseInt($("users_per_bs").value, 10) || 20,
                 INTER_SITE_DISTANCE: interSiteDistance,
@@ -537,6 +762,7 @@ async function startSimulation() {
                 UE_CABLE_LOSS_DB: numberValue("ue_cable_loss_db", 0),
                 UE_MIMO_LAYERS: parseInt($("ue_mimo_layers").value, 10) || 2,
                 UE_RX_SENSITIVITY_DBM: numberValue("ue_rx_sensitivity_dbm", -80),
+                UE_RX_SENSITIVITY_MARGIN_DB: numberValue("ue_rx_sensitivity_margin_db", 0),
                 USER_PROFILES: userProfilePayload(),
                 CONNECTION_ATTEMPT_MEAN: numberValue("connection_attempt_mean", 20),
                 CONNECTION_ATTEMPT_STD: numberValue("connection_attempt_std", 3),
@@ -552,6 +778,7 @@ async function startSimulation() {
                 PINGPONG_PERIOD: numberValue("pingpong_period", 10),
                 export_bs_results: exportBsResults,
                 cmf_mode: cmfMode,
+                scenario_preset: $("scenario_preset").value || "default",
             }),
         });
 
@@ -562,19 +789,32 @@ async function startSimulation() {
         }
 
         const result = await response.json();
+        simulationRunning = true;
         $("status-message").textContent = i18n[currentLanguage].startedMessage;
         startPolling();
     } catch (error) {
         console.error(error);
+    } finally {
+        simulationRequestPending = false;
+        updateStartButtonText();
     }
 }
 
 async function stopSimulation() {
+    if (simulationRequestPending) return;
+
+    simulationRequestPending = true;
+    updateStartButtonText();
+
     try {
         await fetch(stopUrl, { method: "POST" });
+        simulationRunning = true;
         $("status-message").textContent = i18n[currentLanguage].stoppingMessage;
     } catch (error) {
         console.error(error);
+    } finally {
+        simulationRequestPending = false;
+        updateStartButtonText();
     }
 }
 
@@ -669,9 +909,156 @@ function getUeProfileColor(color) {
     return profileColors[color] || color || "#94a3b8";
 }
 
+function chooseGridStep(span) {
+    if (span <= 1000) return 100;
+    if (span <= 2500) return 250;
+    if (span <= 5000) return 500;
+    if (span <= 10000) return 1000;
+    return 2000;
+}
+
+function buildSceneBounds(snapshot) {
+    const points = [...(snapshot.bs || []), ...(snapshot.ues || [])].filter(
+        (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+    );
+
+    if (points.length === 0) {
+        return {
+            minX: -1000,
+            maxX: 1000,
+            minY: -1000,
+            maxY: 1000,
+            tickMinX: -1000,
+            tickMaxX: 1000,
+            tickMinY: -1000,
+            tickMaxY: 1000,
+            tickStep: 500,
+        };
+    }
+
+    const xs = points.map((point) => point.x);
+    const ys = points.map((point) => point.y);
+    const rawMinX = Math.min(...xs);
+    const rawMaxX = Math.max(...xs);
+    const rawMinY = Math.min(...ys);
+    const rawMaxY = Math.max(...ys);
+    const spanX = Math.max(rawMaxX - rawMinX, 1);
+    const spanY = Math.max(rawMaxY - rawMinY, 1);
+    const padding = Math.max(spanX, spanY, 600) * 0.12;
+    const minX = Math.max(0, rawMinX - padding);
+    const maxX = rawMaxX + padding;
+    const minY = Math.max(0, rawMinY - padding);
+    const maxY = rawMaxY + padding;
+    const tickStep = chooseGridStep(Math.max(maxX - minX, maxY - minY));
+
+    return {
+        minX,
+        maxX,
+        minY,
+        maxY,
+        tickMinX: Math.floor(minX / tickStep) * tickStep,
+        tickMaxX: Math.ceil(maxX / tickStep) * tickStep,
+        tickMinY: Math.floor(minY / tickStep) * tickStep,
+        tickMaxY: Math.ceil(maxY / tickStep) * tickStep,
+        tickStep,
+    };
+}
+
+function alignSnapshotToAntennaOrigin(snapshot) {
+    const bsPoints = (snapshot.bs || []).filter(
+        (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+    );
+
+    if (bsPoints.length === 0) {
+        return snapshot;
+    }
+
+    const minX = Math.min(...bsPoints.map((point) => point.x));
+    const minY = Math.min(...bsPoints.map((point) => point.y));
+    const shiftX = ANTENNA_DISPLAY_ORIGIN - minX;
+    const shiftY = ANTENNA_DISPLAY_ORIGIN - minY;
+
+    if (shiftX === 0 && shiftY === 0) {
+        return snapshot;
+    }
+
+    const shiftPoint = (point) => ({
+        ...point,
+        x: point.x + shiftX,
+        y: point.y + shiftY,
+    });
+
+    return {
+        ...snapshot,
+        bs: (snapshot.bs || []).map(shiftPoint),
+        ues: (snapshot.ues || []).map(shiftPoint),
+        coordinateShift: { x: shiftX, y: shiftY },
+    };
+}
+
+function previewBaseStations(nBs, isd) {
+    const centerX = 1000;
+    const centerY = 1000;
+    const targetCount = Math.max(1, Number.isFinite(nBs) ? Math.trunc(nBs) : 19);
+    const spacing = Number.isFinite(isd) ? isd : 600;
+    const coords = [];
+    let rings = 0;
+
+    while (1 + 3 * rings * (rings + 1) < targetCount) {
+        rings += 1;
+    }
+
+    for (let q = -rings; q <= rings; q += 1) {
+        for (let r = -rings; r <= rings; r += 1) {
+            const s = -q - r;
+            if (Math.max(Math.abs(q), Math.abs(r), Math.abs(s)) <= rings) {
+                coords.push({
+                    x: centerX + spacing * Math.sqrt(3) * (q + r / 2),
+                    y: centerY + spacing * 1.5 * r,
+                });
+            }
+        }
+    }
+
+    return coords
+        .sort((a, b) => {
+            const distA = (a.x - centerX) ** 2 + (a.y - centerY) ** 2;
+            const distB = (b.x - centerX) ** 2 + (b.y - centerY) ** 2;
+            return distA - distB || a.y - b.y || a.x - b.x;
+        })
+        .slice(0, targetCount)
+        .sort((a, b) => a.y - b.y || a.x - b.x)
+        .map((point, index) => ({
+            id: index + 1,
+            x: point.x,
+            y: point.y,
+            load: 0,
+            used_prbs: 0,
+        }));
+}
+
+function drawConfiguredTopologyPreview() {
+    const nBs = parseInt($("n_bs")?.value, 10) || 19;
+    const interSiteDistance = numberValue("inter_site_distance", 600);
+    const preview = {
+        preview: true,
+        step: 0,
+        steps: 0,
+        time: 0,
+        progress: 0,
+        bs: previewBaseStations(nBs, interSiteDistance),
+        ues: [],
+    };
+
+    setupPreviewActive = true;
+    $("antenna-count").textContent = preview.bs.length;
+    $("progress").textContent = "0%";
+    drawScene(preview);
+}
+
 function drawAxes(ctx, bounds, transformX, transformY, width, height, margin) {
-    const axisOriginX = -2100;
-    const axisOriginY = -2100;
+    const axisOriginX = 0;
+    const axisOriginY = 0;
     const axisX = transformY(axisOriginY);
     const axisY = transformX(axisOriginX);
     const tickSize = 5;
@@ -683,40 +1070,46 @@ function drawAxes(ctx, bounds, transformX, transformY, width, height, margin) {
     ctx.font = "12px Inter, Arial, sans-serif";
 
     ctx.beginPath();
-    ctx.moveTo(margin, axisX);
-    ctx.lineTo(width - margin, axisX);
-    ctx.moveTo(axisY, margin);
-    ctx.lineTo(axisY, height - margin);
+    if (axisX >= margin && axisX <= height - margin) {
+        ctx.moveTo(margin, axisX);
+        ctx.lineTo(width - margin, axisX);
+    }
+    if (axisY >= margin && axisY <= width - margin) {
+        ctx.moveTo(axisY, margin);
+        ctx.lineTo(axisY, height - margin);
+    }
     ctx.stroke();
 
     ctx.textAlign = "center";
     ctx.textBaseline = "top";
-    for (let gx = bounds.tickMinX; gx <= bounds.tickMaxX; gx += 1000) {
+    for (let gx = bounds.tickMinX; gx <= bounds.tickMaxX; gx += bounds.tickStep) {
         const x = transformX(gx);
+        const tickY = axisX >= margin && axisX <= height - margin ? axisX : height - margin;
         ctx.beginPath();
-        ctx.moveTo(x, axisX - tickSize);
-        ctx.lineTo(x, axisX + tickSize);
+        ctx.moveTo(x, tickY - tickSize);
+        ctx.lineTo(x, tickY + tickSize);
         ctx.stroke();
-        ctx.fillText(gx.toString(), x, axisX + tickSize + 4);
+        ctx.fillText(gx.toString(), x, tickY + tickSize + 4);
     }
 
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    for (let gy = bounds.tickMinY; gy <= bounds.tickMaxY; gy += 1000) {
+    for (let gy = bounds.tickMinY; gy <= bounds.tickMaxY; gy += bounds.tickStep) {
         const y = transformY(gy);
+        const tickX = axisY >= margin && axisY <= width - margin ? axisY : margin;
         ctx.beginPath();
-        ctx.moveTo(axisY - tickSize, y);
-        ctx.lineTo(axisY + tickSize, y);
+        ctx.moveTo(tickX - tickSize, y);
+        ctx.lineTo(tickX + tickSize, y);
         ctx.stroke();
-        ctx.fillText(gy.toString(), axisY - tickSize - 6, y);
+        ctx.fillText(gy.toString(), tickX - tickSize - 6, y);
     }
 
     ctx.textAlign = "right";
     ctx.textBaseline = "bottom";
-    ctx.fillText("x (m)", width - margin, axisX - 8);
+    ctx.fillText("x (m)", width - margin, Math.min(Math.max(axisX - 8, margin), height - margin));
 
     ctx.save();
-    ctx.translate(axisY + 16, margin);
+    ctx.translate(Math.min(Math.max(axisY + 16, margin + 16), width - margin), margin);
     ctx.rotate(-Math.PI / 2);
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
@@ -727,22 +1120,14 @@ function drawAxes(ctx, bounds, transformX, transformY, width, height, margin) {
 }
 
 function drawScene(snapshot) {
+    const displaySnapshot = alignSnapshotToAntennaOrigin(snapshot);
     const canvas = $("simulation-canvas");
     const ctx = canvas.getContext("2d");
     const width = canvas.width;
     const height = canvas.height;
     ctx.clearRect(0, 0, width, height);
 
-    const bounds = {
-        minX: -2500,
-        maxX: 4050,
-        minY: -2500,
-        maxY: 4500,
-        tickMinX: -2000,
-        tickMaxX: 4000,
-        tickMinY: -2000,
-        tickMaxY: 4000,
-    };
+    const bounds = buildSceneBounds(displaySnapshot);
     const margin = 48;
     const scaleX = (width - margin * 2) / (bounds.maxX - bounds.minX);
     const scaleY = (height - margin * 2) / (bounds.maxY - bounds.minY);
@@ -758,14 +1143,14 @@ function drawScene(snapshot) {
     ctx.fillRect(0, 0, width, height);
     ctx.strokeStyle = "#e2e8f0";
     ctx.lineWidth = 1;
-    for (let gx = bounds.tickMinX; gx <= bounds.tickMaxX; gx += 1000) {
+    for (let gx = bounds.tickMinX; gx <= bounds.tickMaxX; gx += bounds.tickStep) {
         const x = transformX(gx);
         ctx.beginPath();
         ctx.moveTo(x, 0);
         ctx.lineTo(x, height);
         ctx.stroke();
     }
-    for (let gy = bounds.tickMinY; gy <= bounds.tickMaxY; gy += 1000) {
+    for (let gy = bounds.tickMinY; gy <= bounds.tickMaxY; gy += bounds.tickStep) {
         const y = transformY(gy);
         ctx.beginPath();
         ctx.moveTo(0, y);
@@ -775,14 +1160,10 @@ function drawScene(snapshot) {
 
     drawAxes(ctx, bounds, transformX, transformY, width, height, margin);
 
-    const centralBs = snapshot.bs.find((bs) => bs.id === 10);
-    const bsOffsetX = centralBs ? 1000 - centralBs.x : 0;
-    const bsOffsetY = centralBs ? 1000 - centralBs.y : 0;
-
     // Draw BS positions
-    snapshot.bs.forEach((bs) => {
-        const x = transformX(bs.x + bsOffsetX);
-        const y = transformY(bs.y + bsOffsetY);
+    (displaySnapshot.bs || []).forEach((bs) => {
+        const x = transformX(bs.x);
+        const y = transformY(bs.y);
         drawCellTower(ctx, x, y);
         ctx.fillStyle = "#1d3557";
         ctx.font = "12px Inter, Arial, sans-serif";
@@ -792,7 +1173,7 @@ function drawScene(snapshot) {
     });
 
     // Draw UEs
-    snapshot.ues.forEach((ue) => {
+    (displaySnapshot.ues || []).forEach((ue) => {
         const x = transformX(ue.x);
         const y = transformY(ue.y);
         ctx.fillStyle = getUeProfileColor(ue.color);
@@ -814,8 +1195,20 @@ function init() {
     $("language-toggle").addEventListener("click", toggleLanguage);
     $("setup-visual-shortcut").addEventListener("click", () => switchTab("visual"));
     $("start-button").addEventListener("click", toggleSimulation);
+    $("scenario_preset").addEventListener("change", applyScenarioPreset);
+    document.querySelectorAll("#setup-panel input, #setup-panel select").forEach((field) => {
+        if (field.id !== "scenario_preset") {
+            field.addEventListener("input", updateScenarioSummary);
+            field.addEventListener("change", updateScenarioSummary);
+        }
+    });
+    const setupStartBtn = $("setup-start-button");
+    if (setupStartBtn) {
+        setupStartBtn.addEventListener("click", toggleSimulation);
+    }
 
     enhanceSetupCards();
+    applyScenarioPreset();
     applyLanguage(currentLanguage);
     switchTab("setup");
     startPolling();
