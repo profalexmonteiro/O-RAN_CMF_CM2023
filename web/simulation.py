@@ -372,6 +372,7 @@ class User:
     y: float  # Posição Y em metros
     speed: float  # Velocidade de movimento (m/s)
     direction: float  # Direção de movimento (radianos)
+    mobility_type: str  # Tipo de mobilidade: pedestrian ou vehicle
     profile_name: str  # Nome do perfil de tráfego
     bitrate_bps: float  # Taxa de bits requerida (bps)
     color: str  # Cor para visualização
@@ -986,6 +987,7 @@ def create_users(poly):
 
         # Divide usuários entre pedestres e veículos conforme a configuração.
         is_pedestrian = np.random.rand() < PEDESTRIAN_PROB
+        mobility_type = "pedestrian" if is_pedestrian else "vehicle"
         speed = PEDESTRIAN_SPEED if is_pedestrian else VEHICLE_SPEED
         direction = np.random.uniform(0, 2 * np.pi)
 
@@ -999,6 +1001,7 @@ def create_users(poly):
             y=y,
             speed=speed,
             direction=direction,
+            mobility_type=mobility_type,
             profile_name=profile_name,
             bitrate_bps=bitrate,
             color=color
@@ -2039,6 +2042,7 @@ def run_simulation(show_progress=False, step_callback=None, stop_event=None, cmf
                         "connected": bool(ue.connected),
                         "serving_bs": ue.serving_bs,
                         "speed": float(ue.speed),
+                        "mobility_type": ue.mobility_type,
                     }
                     for ue in users
                 ],

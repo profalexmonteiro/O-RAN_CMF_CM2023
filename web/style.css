@@ -365,6 +365,25 @@ button.stop-mode {
     box-shadow: 0 6px 16px rgba(15, 23, 42, 0.06);
 }
 
+.visual-select-control {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #334155;
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.visual-select-control select {
+    min-width: 220px;
+    padding: 9px 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    background: #fff;
+    color: #1e293b;
+    font: inherit;
+}
+
 #simulation-canvas {
     display: block;
     width: min(100%, 900px);
@@ -404,6 +423,14 @@ button.stop-mode {
 
 .legend-dot.high {
     background: red;
+}
+
+.legend-dot.vehicle {
+    background: #2563eb;
+}
+
+.legend-dot.pedestrian {
+    background: #dc2626;
 }
 
 .legend-dot.bs {

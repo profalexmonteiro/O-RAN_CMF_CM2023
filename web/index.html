@@ -290,11 +290,33 @@
                 <div>
                     <h2>Visualização em Tempo Real</h2>
                     <p>Monitore os movimentos das antenas e dos UEs.</p>
-                </div>
+                </div>                              
+            </div>                      
+            <div class="canvas-container">
+                <canvas id="simulation-canvas" width="750" height="520"></canvas>
                 <div class="button-row visual-actions">
+                     <div class="status-card visual-recommendation">
+                        <h3>Recomendações rápidas</h3>
+                        <p id="recommendation-text">Use presets para configurar cenários comuns e inicie a simulação direto do setup. Ajuste TTT, histerese e sensibilidade RX para testar transferência de célula e estabilidade.</p>
+                    </div>
+                    <label class="visual-select-control">
+                        Esquema de cores
+                        <select id="ue_color_scheme">
+                            <option value="bitrate">Bitrate</option>
+                            <option value="mobility">Carros Azul e Pedestres vermelho</option>
+                        </select>
+                    </label>
                     <button type="button" id="start-button">Iniciar Simulação</button>
                 </div>
-                <div class="metrics">
+            </div>
+            <div class="legend">
+                <span><span class="legend-dot low"></span> Low bitrate: 96 kbps (60%)</span>
+                <span><span class="legend-dot medium"></span> Medium bitrate: 5000 kbps (30%)</span>
+                <span><span class="legend-dot high"></span> High bitrate: 24000 kbps (10%)</span>
+                <span><span class="legend-dot bs"></span> Antena (BS)</span>
+            </div>
+         
+              <div class="metrics">
                     <p><strong>Conectados:</strong> <span id="connected-count">0</span></p>
                     <p><strong>Satisfação:</strong> <span id="user-satisfaction">0%</span></p>
                     <p><strong>Handovers:</strong> <span id="handovers">0</span></p>
@@ -305,7 +327,6 @@
                     <p><strong>Load máximo:</strong> <span id="max-load">0%</span></p>
                     <p><strong>Antenas:</strong> <span id="antenna-count">0</span></p>
                 </div>
-            </div>
             <div class="status-card visual-status">
                 <h3>Status</h3>
                 <p id="status-message">Aguardando início.</p>
@@ -313,19 +334,6 @@
                 <p><strong>Progresso:</strong> <span id="progress">0%</span></p>
                 <p><strong>Cenário ativo:</strong> <span id="scenario-summary">Nenhum</span></p>
                 <p><strong>Preset:</strong> <span id="scenario-preset-summary">Padrão</span></p>
-            </div>
-            <div class="status-card visual-recommendation">
-                <h3>Recomendações rápidas</h3>
-                <p id="recommendation-text">Use presets para configurar cenários comuns e inicie a simulação direto do setup. Ajuste TTT, histerese e sensibilidade RX para testar transferência de célula e estabilidade.</p>
-            </div>
-            <div class="canvas-container">
-                <canvas id="simulation-canvas" width="900" height="620"></canvas>
-            </div>
-            <div class="legend">
-                <span><span class="legend-dot low"></span> Low bitrate: 96 kbps (60%)</span>
-                <span><span class="legend-dot medium"></span> Medium bitrate: 5000 kbps (30%)</span>
-                <span><span class="legend-dot high"></span> High bitrate: 24000 kbps (10%)</span>
-                <span><span class="legend-dot bs"></span> Antena (BS)</span>
             </div>
         </section>
     </main>

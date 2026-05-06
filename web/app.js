@@ -6,7 +6,48 @@ let simulationRunning = false;
 let simulationRequestPending = false;
 let setupPreviewActive = false;
 let currentLanguage = "pt";
+let latestDrawnSnapshot = null;
 const ANTENNA_DISPLAY_ORIGIN = 1500;
+
+const ueColorSchemeOptionLabels = {
+    pt: {
+        bitrate: "Bitrate",
+        mobility: "Carros Azul e Pedestres vermelho",
+    },
+    en: {
+        bitrate: "Bitrate",
+        mobility: "Blue vehicles and red pedestrians",
+    },
+};
+
+const legendLabels = {
+    pt: {
+        bitrate: [
+            { className: "low", text: "Low bitrate: 96 kbps (60%)" },
+            { className: "medium", text: "Medium bitrate: 5000 kbps (30%)" },
+            { className: "high", text: "High bitrate: 24000 kbps (10%)" },
+            { className: "bs", text: "Antena (BS)" },
+        ],
+        mobility: [
+            { className: "vehicle", text: "Carros: azul" },
+            { className: "pedestrian", text: "Pedestres: vermelho" },
+            { className: "bs", text: "Antena (BS)" },
+        ],
+    },
+    en: {
+        bitrate: [
+            { className: "low", text: "Low bitrate: 96 kbps (60%)" },
+            { className: "medium", text: "Medium bitrate: 5000 kbps (30%)" },
+            { className: "high", text: "High bitrate: 24000 kbps (10%)" },
+            { className: "bs", text: "Antenna (BS)" },
+        ],
+        mobility: [
+            { className: "vehicle", text: "Vehicles: blue" },
+            { className: "pedestrian", text: "Pedestrians: red" },
+            { className: "bs", text: "Antenna (BS)" },
+        ],
+    },
+};
 
 const i18n = {
     pt: {
@@ -110,6 +151,7 @@ const i18n = {
             ric_control_period: "Período de controle RIC (s)",
             mro_window: "Janela MRO (s)",
             pingpong_period: "Período ping-pong (s)",
+            ue_color_scheme: "Esquema de cores",
         },
         tooltips: {
             sim_time: "Tempo total que a simulação executa, em segundos.",
@@ -269,6 +311,7 @@ const i18n = {
             ric_control_period: "RIC control period (s)",
             mro_window: "MRO window (s)",
             pingpong_period: "Ping-pong period (s)",
+            ue_color_scheme: "Color scheme",
         },
         tooltips: {
             sim_time: "Total time the simulation runs, in seconds.",
@@ -570,6 +613,10 @@ function applyLanguage(language) {
         const option = document.querySelector(`#cmf_mode option[value="${value}"]`);
         if (option) option.textContent = text;
     });
+    Object.entries(ueColorSchemeOptionLabels[currentLanguage]).forEach(([value, text]) => {
+        const option = document.querySelector(`#ue_color_scheme option[value="${value}"]`);
+        if (option) option.textContent = text;
+    });
     Object.entries(scenarioPresetLabels[currentLanguage]).forEach(([value, text]) => {
         const option = document.querySelector(`#scenario_preset option[value="${value}"]`);
         if (option) option.textContent = text;
@@ -577,6 +624,7 @@ function applyLanguage(language) {
 
     updateStartButtonText();
     updateScenarioSummary();
+    updateLegend();
     document.querySelectorAll("#setup-panel .parameter-card").forEach(updateCardToggleText);
 }
 
@@ -732,6 +780,10 @@ async function startSimulation() {
     const exportBsResults = $("export_bs_results").checked;
 
     try {
+        simulationRunning = true;
+        $("status-message").textContent = i18n[currentLanguage].startedMessage;
+        startPolling();
+
         const response = await fetch(startUrl, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -789,9 +841,9 @@ async function startSimulation() {
         }
 
         const result = await response.json();
-        simulationRunning = true;
-        $("status-message").textContent = i18n[currentLanguage].startedMessage;
-        startPolling();
+        if (result.state) {
+            updateStatus(result.state);
+        }
     } catch (error) {
         console.error(error);
     } finally {
@@ -897,7 +949,48 @@ function drawCellTower(ctx, x, y) {
     ctx.restore();
 }
 
-function getUeProfileColor(color) {
+function selectedUeColorScheme() {
+    return $("ue_color_scheme")?.value || "bitrate";
+}
+
+function updateLegend() {
+    const legend = document.querySelector(".legend");
+    if (!legend) return;
+
+    const scheme = selectedUeColorScheme();
+    const items = legendLabels[currentLanguage]?.[scheme] || legendLabels[currentLanguage].bitrate;
+    legend.textContent = "";
+    items.forEach((item) => {
+        const entry = document.createElement("span");
+        const dot = document.createElement("span");
+        dot.className = `legend-dot ${item.className}`;
+        entry.appendChild(dot);
+        entry.append(` ${item.text}`);
+        legend.appendChild(entry);
+    });
+}
+
+function mobilityColorForUe(ue) {
+    if (ue.mobility_type === "vehicle") return "#2563eb";
+    if (ue.mobility_type === "pedestrian") return "#dc2626";
+
+    const pedestrianSpeed = numberValue("pedestrian_speed", 5);
+    const vehicleSpeed = numberValue("vehicle_speed", 25);
+    const speed = Number(ue.speed);
+    if (Number.isFinite(speed)) {
+        return Math.abs(speed - vehicleSpeed) < Math.abs(speed - pedestrianSpeed)
+            ? "#2563eb"
+            : "#dc2626";
+    }
+
+    return "#94a3b8";
+}
+
+function getUeColor(ue) {
+    if (selectedUeColorScheme() === "mobility") {
+        return mobilityColorForUe(ue);
+    }
+
     const profileColors = {
         green: "green",
         olive: "yellow",
@@ -906,7 +999,7 @@ function getUeProfileColor(color) {
         red: "red",
     };
 
-    return profileColors[color] || color || "#94a3b8";
+    return profileColors[ue.color] || ue.color || "#94a3b8";
 }
 
 function chooseGridStep(span) {
@@ -1198,6 +1291,7 @@ function drawAxes(ctx, bounds, transformX, transformY, width, height, margin) {
 }
 
 function drawScene(snapshot) {
+    latestDrawnSnapshot = snapshot;
     const displaySnapshot = alignSnapshotToAntennaOrigin(snapshot);
     const canvas = $("simulation-canvas");
     const ctx = canvas.getContext("2d");
@@ -1279,7 +1373,7 @@ function drawScene(snapshot) {
     (displaySnapshot.ues || []).forEach((ue) => {
         const x = transformX(ue.x);
         const y = transformY(ue.y);
-        ctx.fillStyle = getUeProfileColor(ue.color);
+        ctx.fillStyle = getUeColor(ue);
         ctx.beginPath();
         ctx.arc(x, y, 3.2, 0, Math.PI * 2);
         ctx.fill();
@@ -1298,6 +1392,12 @@ function init() {
     $("language-toggle").addEventListener("click", toggleLanguage);
     $("setup-visual-shortcut").addEventListener("click", () => switchTab("visual"));
     $("start-button").addEventListener("click", toggleSimulation);
+    $("ue_color_scheme").addEventListener("change", () => {
+        updateLegend();
+        if (latestDrawnSnapshot) {
+            drawScene(latestDrawnSnapshot);
+        }
+    });
     $("scenario_preset").addEventListener("change", applyScenarioPreset);
     document.querySelectorAll("#setup-panel input, #setup-panel select").forEach((field) => {
         if (field.id !== "scenario_preset") {

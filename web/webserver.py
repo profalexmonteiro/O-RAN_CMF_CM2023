@@ -12,7 +12,7 @@ import numpy as np
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, ROOT_DIR)
 
-import scripts.simulation as simulation
+import simulation as simulation
 
 WEB_DIR = os.path.abspath(os.path.dirname(__file__))
 PORT = 8000
