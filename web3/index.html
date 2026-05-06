@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Simulação O-RAN - Interface Web</title>
+    <link rel="stylesheet" href="style.css?v=web-layout-1" />
+</head>
+<body>
+    <header>
+        <div>
+            <h1>Simulação O-RAN</h1>
+            <p>Interface web com aba de setup e visualização em tempo real.</p>
+        </div>
+        <button type="button" id="language-toggle" class="language-toggle">English</button>
+    </header>
+
+    <nav class="tabs">
+        <button id="tab-setup" class="tab-button active" type="button">Setup</button>
+        <button id="tab-visual" class="tab-button" type="button">Visualização</button>
+    </nav>
+
+    <main>
+        <section id="setup-panel" class="tab-panel active">
+            <h2>Configuração da Simulação</h2>
+            <form id="setup-form">
+                <div class="setup-form-header">
+                    <h3>Cenário Essencial</h3>
+                    <p>Ajuste apenas estes campos para rodar um cenário básico. Os demais cartões refinam rádio, mobilidade e visualização.</p>
+                </div>
+                <label>
+                    Preset de cenário
+                    <select id="preset">
+                        <option value="default">Padrão</option>
+                        <option value="handover">Forçar handover</option>
+                        <option value="density">Alta densidade</option>
+                        <option value="wide">Baixa interferência</option>
+                    </select>
+                </label>
+                <label>
+                    Tempo de simulação (s)
+                    <input id="sim-time" type="number" min="1" step="1" value="1000" />
+                </label>
+                <label>
+                    Distância entre antenas (m)
+                    <input id="isd" type="number" min="100" max="2500" step="50" value="600" />
+                </label>
+                <label>
+                    Margem da área (x ISD)
+                    <input id="area-margin-factor" type="number" min="0.1" max="5" step="0.1" value="1.5" />
+                </label>
+                <label>
+                    Quantidade de antenas
+                    <input id="n-bs" type="number" min="1" max="61" step="1" value="19" />
+                </label>
+                <label>
+                    Usuários por estação base
+                    <input id="users-per-bs" type="number" min="1" step="1" value="20" />
+                </label>
+                <label>
+                    Número de UEs
+                    <input id="n-users" type="number" min="10" max="3000" step="10" value="380" />
+                </label>
+                <label>
+                    Atualização de posição (s)
+                    <input id="dt" type="number" min="0.01" step="0.01" value="0.05" />
+                </label>
+                <label>
+                    Tipo de simulação
+                    <select id="cmf-mode">
+                        <option value="no_CM">Sem CMF</option>
+                        <option value="prio_MRO">Prioridade MRO</option>
+                        <option value="prio_MLB">Prioridade MLB</option>
+                    </select>
+                </label>
+                <label>
+                    Velocidade da simulação
+                    <input id="speed-scale" type="range" min="0.25" max="8" step="0.25" value="1" />
+                </label>
+                <div class="button-row">
+                    <button type="button" id="setup-start-button">Iniciar Simulação</button>
+                    <button type="button" id="setup-visual-shortcut" class="secondary-button">Ir para Visualização</button>
+                </div>
+                <div id="setup-validation" class="validation-card"></div>
+            </form>
+
+            <div class="parameter-card">
+                <h3>Estações Base</h3>
+                <div class="parameter-list">
+                    <label>
+                        Potência TX (dBm)
+                        <input id="tx-power" type="number" min="0" max="60" step="1" value="28" />
+                    </label>
+                    <label>
+                        Ganho da antena (dB)
+                        <input id="bs-antenna-gain" type="number" step="0.1" value="2" />
+                    </label>
+                    <label>
+                        Altura da antena (m)
+                        <input id="bs-height" type="number" min="1" step="0.1" value="10" />
+                    </label>
+                    <label>
+                        Perda no cabo (dB)
+                        <input id="bs-cable-loss" type="number" min="0" step="0.1" value="2" />
+                    </label>
+                    <label>
+                        Frequência central (MHz)
+                        <input id="frequency" type="number" min="600" max="6000" step="100" value="2100" />
+                    </label>
+                    <label>
+                        Bandwidth (MHz)
+                        <input id="bandwidth-mhz" type="number" min="1" step="1" value="20" />
+                    </label>
+                    <label>
+                        Subcarrier count
+                        <input id="subcarrier-count" type="number" min="1" step="1" value="12" />
+                    </label>
+                    <label>
+                        Subcarrier spacing (kHz)
+                        <input id="subcarrier-spacing-khz" type="number" min="1" step="1" value="15" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="parameter-card">
+                <h3>Mobilidade e Handover</h3>
+                <p class="card-description">Ajuste os parâmetros de handover e mobilidade do UE de forma centralizada.</p>
+                <div class="parameter-list">
+                    <label>
+                        Cell Individual Offset padrão (dB)
+                        <input id="default-cio" type="number" step="0.1" value="0" />
+                    </label>
+                    <label>
+                        Sensibilidade RX (dBm)
+                        <input id="rx-sensitivity" type="number" min="-140" max="-60" step="1" value="-110" />
+                    </label>
+                    <label>
+                        Margem de sensibilidade RX (dB)
+                        <input id="rx-sensitivity-margin" type="number" step="0.1" value="0" />
+                    </label>
+                    <label>
+                        Histerese de handover (dB)
+                        <input id="hysteresis" type="number" min="0" max="10" step="0.1" value="0" />
+                    </label>
+                    <label>
+                        Handover Time-To-Trigger (s)
+                        <input id="ttt" type="number" min="0" max="2" step="0.001" value="0.064" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="parameter-card">
+                <h3>Usuários</h3>
+                <div class="parameter-list">
+                    <label>
+                        Ganho da antena UE (dB)
+                        <input id="ue-antenna-gain" type="number" step="0.1" value="0" />
+                    </label>
+                    <label>
+                        Altura da antena UE (m)
+                        <input id="ue-height" type="number" min="0.1" step="0.1" value="1.6" />
+                    </label>
+                    <label>
+                        Perda no cabo UE (dB)
+                        <input id="ue-cable-loss" type="number" min="0" step="0.1" value="0" />
+                    </label>
+                    <label>
+                        MIMO layers
+                        <input id="ue-mimo-layers" type="number" min="1" step="1" value="2" />
+                    </label>
+                    <label>
+                        Pedestres (%)
+                        <input id="pedestrian-prob" type="number" min="0" max="100" step="1" value="80" />
+                    </label>
+                    <label>
+                        Velocidade pedestre (m/s)
+                        <input id="pedestrian-speed" type="number" min="0" max="20" step="0.5" value="5" />
+                    </label>
+                    <label>
+                        Velocidade veículo (m/s)
+                        <input id="vehicle-speed" type="number" min="0" max="80" step="0.5" value="25" />
+                    </label>
+                    <label>
+                        Mudança de direção (%/s)
+                        <input id="turn-prob" type="number" min="0" max="50" step="0.1" value="1.2" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="parameter-card">
+                <h3>Perfis de Usuário</h3>
+                <p class="card-description">Cada perfil define o bitrate exigido pelo UE e a probabilidade de atribuição aleatória.</p>
+                <div class="parameter-list">
+                    <label>
+                        Low bitrate (kbps)
+                        <input id="low-bitrate" type="number" min="1" step="1" value="96" />
+                    </label>
+                    <label>
+                        Low profile (%)
+                        <input id="low-prob" type="number" min="0" max="100" step="1" value="60" />
+                    </label>
+                    <label>
+                        Medium bitrate (kbps)
+                        <input id="medium-bitrate" type="number" min="1" step="1" value="5000" />
+                    </label>
+                    <label>
+                        Medium profile (%)
+                        <input id="medium-prob" type="number" min="0" max="100" step="1" value="30" />
+                    </label>
+                    <label>
+                        High bitrate (kbps)
+                        <input id="high-bitrate" type="number" min="1" step="1" value="24000" />
+                    </label>
+                    <label>
+                        High profile (%)
+                        <input id="high-prob" type="number" min="0" max="100" step="1" value="10" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="parameter-card">
+                <h3>Geração de Tráfego</h3>
+                <p class="card-description">Parâmetros estocásticos para tentativas e duração das conexões.</p>
+                <div class="parameter-list">
+                    <label>
+                        Média entre tentativas (s)
+                        <input id="connection-attempt-mean" type="number" min="0.1" step="0.1" value="20" />
+                    </label>
+                    <label>
+                        Desvio entre tentativas (s)
+                        <input id="connection-attempt-std" type="number" min="0" step="0.1" value="3" />
+                    </label>
+                    <label>
+                        Duração média da conexão (s)
+                        <input id="connection-duration-mean" type="number" min="0.1" step="0.1" value="60" />
+                    </label>
+                    <label>
+                        Desvio da duração (s)
+                        <input id="connection-duration-std" type="number" min="0" step="0.1" value="15" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="parameter-card">
+                <h3>Modelo de Propagação</h3>
+                <p class="card-description">Perdas e margens adicionais aplicadas ao enlace rádio.</p>
+                <div class="parameter-list">
+                    <label>
+                        Body loss (dB)
+                        <input id="body-loss" type="number" step="0.1" value="1" />
+                    </label>
+                    <label>
+                        Slow-fading margin (dB)
+                        <input id="slow-fading-margin" type="number" step="0.1" value="4" />
+                    </label>
+                    <label>
+                        Foliage loss (dB)
+                        <input id="foliage-loss" type="number" step="0.1" value="4" />
+                    </label>
+                    <label>
+                        Interference margin (dB)
+                        <input id="interference-margin" type="number" step="0.1" value="2" />
+                    </label>
+                    <label>
+                        Rain margin (dB)
+                        <input id="rain-margin" type="number" step="0.1" value="0" />
+                    </label>
+                    <label>
+                        Noise figure (dB)
+                        <input id="noise-figure" type="number" step="0.1" value="7" />
+                    </label>
+                    <label>
+                        Thermal noise (dBm/Hz)
+                        <input id="thermal-noise" type="number" step="0.1" value="-174" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="parameter-card">
+                <h3>Recursos de Rádio</h3>
+                <p class="card-description">Configuração de PRBs usada para estimar carga e bloqueios.</p>
+                <div class="parameter-list">
+                    <label>
+                        PRB bandwidth (kHz)
+                        <input id="prb-bandwidth-khz" type="number" min="1" step="1" value="180" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="parameter-card">
+                <h3>Configuração do RIC</h3>
+                <p class="card-description">Parâmetros do near-RT RIC, MRO, MLB e limites de falha de enlace.</p>
+                <div class="parameter-list">
+                    <label>
+                        Período de controle RIC (s)
+                        <input id="ric-control-period" type="number" min="0.1" step="0.1" value="10" />
+                    </label>
+                    <label>
+                        Janela MRO (s)
+                        <input id="mro-window" type="number" min="1" step="1" value="240" />
+                    </label>
+                    <label>
+                        Período ping-pong (s)
+                        <input id="pingpong-period" type="number" min="0.1" step="0.1" value="10" />
+                    </label>
+                    <label>
+                        Ignorar estatísticas iniciais (s)
+                        <input id="statistics-ignore-initial" type="number" min="0" step="1" value="150" />
+                    </label>
+                    <label>
+                        RLF SINR threshold (dB)
+                        <input id="rlf-sinr-threshold" type="number" step="0.1" value="-6" />
+                    </label>
+                    <label>
+                        RLF RSRP threshold (dBm)
+                        <input id="rlf-rsrp-threshold" type="number" step="1" value="-110" />
+                    </label>
+                </div>
+            </div>
+
+            <div class="parameter-card">
+                <h3>Visualização</h3>
+                <p class="card-description">O gráfico usa WebGPU quando disponível e Canvas 2D como fallback CPU.</p>
+                <div class="parameter-list">
+                    <label>
+                        Esquema de cores UE
+                        <select id="color-scheme">
+                            <option value="bitrate">Bitrate</option>
+                            <option value="mobility">Carros Azul e Pedestres vermelho</option>
+                        </select>
+                    </label>
+                    <label class="checkbox-label">
+                        <input id="show-links" type="checkbox" checked />
+                        <span>Mostrar associação UE-BS</span>
+                    </label>
+                </div>
+            </div>
+        </section>
+
+        <section id="visual-panel" class="tab-panel">
+            <div class="visual-header">
+                <div>
+                    <h2>Visualização em Tempo Real</h2>
+                    <p>Monitore os movimentos das antenas e dos UEs.</p>
+                </div>
+                <div class="button-row visual-actions">
+                    <span id="gpu-status" class="gpu-status">Inicializando WebGPU</span>
+                    <button type="button" id="reset-button" class="secondary-button">Resetar</button>
+                    <button type="button" id="start-button">Iniciar Simulação</button>
+                </div>
+            </div>
+
+            <div class="metrics">
+                <p><strong>Tempo:</strong> <span id="metric-time">0.0 s</span></p>
+                <p><strong>Conectados:</strong> <span id="metric-connected">0</span></p>
+                <p><strong>Satisfação:</strong> <span id="metric-satisfaction">0%</span></p>
+                <p><strong>Handovers:</strong> <span id="metric-handovers">0</span></p>
+                <p><strong>Ping-pong:</strong> <span id="metric-pingpong">0</span></p>
+                <p><strong>RLFs:</strong> <span id="metric-rlf">0</span></p>
+                <p><strong>Bloqueios:</strong> <span id="metric-blocked">0</span></p>
+                <p><strong>Load médio:</strong> <span id="metric-load">0%</span></p>
+            </div>
+
+            <div class="status-card visual-status">
+                <h3>Status</h3>
+                <p id="status-message">Aguardando início.</p>
+                <p><strong>Modo de renderização:</strong> <span id="render-summary">Inicializando</span></p>
+                <p><strong>Cenário ativo:</strong> <span id="scenario-summary">WebGPU/CPU local</span></p>
+            </div>
+
+            <div class="status-card visual-recommendation">
+                <h3>Recomendações rápidas</h3>
+                <p id="recommendation-text">Use presets para configurar cenários comuns. Ajuste TTT, histerese e sensibilidade RX para testar transferência de célula e estabilidade.</p>
+            </div>
+
+            <div class="canvas-container">
+                <div class="viewport-wrap">
+                    <canvas id="scene" width="1280" height="760"></canvas>
+                    <canvas id="tower-layer" width="1280" height="760" aria-hidden="true"></canvas>
+                    <div id="fallback-message" class="fallback-message" hidden></div>
+                </div>
+            </div>
+
+            <div id="legend" class="legend">
+                <span><span class="legend-dot low"></span> Low bitrate: 96 kbps (60%)</span>
+                <span><span class="legend-dot medium"></span> Medium bitrate: 5000 kbps (30%)</span>
+                <span><span class="legend-dot high"></span> High bitrate: 24000 kbps (10%)</span>
+                <span><span class="legend-dot bs"></span> Antena (BS)</span>
+            </div>
+        </section>
+    </main>
+
+    <script type="module" src="app.js?v=web-layout-1"></script>
+</body>
+</html>
