@@ -30,12 +30,12 @@ header p  { margin: 6px 0 0; color: #b8c6db; font-size: 14px; }
 
 /* ── Main layout ── */
 main { padding: 24px; max-width: 1200px; margin: 0 auto; }
-.tab-panel { display: none; }
-.tab-panel.active { display: block; }
+.tab-panel { display: none !important; }
+.tab-panel.active { display: block !important; }
 
 /* ── Setup panel ── */
 form { display: grid; grid-template-columns: 1fr; gap: var(--setup-inner-gap); }
-#setup-panel { align-items: start; display: grid; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: var(--setup-card-gap); }
+#setup-panel.active { display: grid !important; align-items: start; grid-template-columns: minmax(260px, 330px) minmax(0, 1fr); gap: var(--setup-card-gap); }
 #setup-panel > h2 { grid-column: 1 / -1; margin: 0 0 4px; }
 
 #setup-form {
@@ -180,7 +180,7 @@ button.running:hover { background: #9a3409; }
 
 /* ── Responsive ── */
 @media (max-width: 900px) {
-    #setup-panel { display: block; }
+    #setup-panel.active { display: block !important; }
     #setup-form { margin-bottom: var(--setup-card-gap); position: static; }
     .parameter-card { margin-bottom: var(--setup-card-gap); }
     #setup-panel label { align-items: stretch; display: flex; text-align: left; }
